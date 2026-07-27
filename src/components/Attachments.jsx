@@ -1,9 +1,12 @@
 import React from "react";
-import { Paperclip, X, FileText, Image as ImageIcon, File as FileIcon } from "lucide-react";
+import { Paperclip, X, FileText, File as FileIcon, ExternalLink } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
-/* Renders the row of pending-attachment chips above the composer,     */
-/* and the read-only chips shown inside a sent user message.           */
+/* Renders the row of pending-attachment previews above the composer,  */
+/* and the richer read-only previews shown inside a sent user message. */
+/* Images get a real thumbnail; PDFs get an inline first-page preview  */
+/* (native <object>, no extra dependency); everything else falls back */
+/* to a labelled file card.                                            */
 /* ------------------------------------------------------------------ */
 
 export function formatFileSize(bytes) {
@@ -12,52 +15,94 @@ export function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
-function iconFor(type) {
-  if (type?.startsWith("image/")) return ImageIcon;
-  if (type === "application/pdf" || type?.includes("word")) return FileText;
-  return FileIcon;
+function extensionOf(name = "") {
+  const parts = name.split(".");
+  return parts.length > 1 ? parts.pop().toUpperCase().slice(0, 4) : "";
 }
 
-export function AttachmentBar({ attachments, onRemove }) {
-  if (!attachments.length) return null;
+function kindOf(type, name) {
+  if (type?.startsWith("image/")) return "image";
+  if (type === "application/pdf" || /\.pdf$/i.test(name || "")) return "pdf";
+  return "file";
+}
+
+/* ---------- small preview builder shared by both bar and message ---- */
+function Preview({ a, size }) {
+  const kind = kindOf(a.type, a.name);
+  const dim = { width: size, height: size };
+
+  if (kind === "image" && a.url) {
+    return (
+      <img src={a.url} alt={a.name} className="attachment-thumb" style={dim} />
+    );
+  }
+  if (kind === "pdf" && a.url) {
+    return (
+      <div className="attachment-thumb attachment-thumb-pdf" style={dim}>
+        <object data={`${a.url}#page=1&view=FitH`} type="application/pdf" className="attachment-pdf-object">
+          <div className="attachment-fallback-icon"><FileText size={20} /></div>
+        </object>
+        <span className="attachment-ext-badge">PDF</span>
+      </div>
+    );
+  }
+  const ext = extensionOf(a.name);
   return (
-    <div className="attachment-bar">
-      {attachments.map((a) => {
-        const Icon = iconFor(a.type);
-        return (
-          <div className="attachment-chip" key={a.id}>
-            <Icon size={14} className="attachment-chip-icon" />
-            <span className="attachment-chip-name">{a.name}</span>
-            <span className="attachment-chip-size">{formatFileSize(a.size)}</span>
-            <button
-              type="button"
-              className="attachment-chip-remove"
-              onClick={() => onRemove(a.id)}
-              title="Retirer"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        );
-      })}
+    <div className="attachment-thumb attachment-thumb-generic" style={dim}>
+      <FileIcon size={20} className="attachment-fallback-icon" />
+      {ext && <span className="attachment-ext-badge">{ext}</span>}
     </div>
   );
 }
 
+/* ---------- pending attachments, shown above the composer ----------- */
+export function AttachmentBar({ attachments, onRemove }) {
+  if (!attachments.length) return null;
+  return (
+    <div className="attachment-bar">
+      {attachments.map((a) => (
+        <div className="attachment-card" key={a.id}>
+          <Preview a={a} size={52} />
+          <div className="attachment-card-meta">
+            <span className="attachment-chip-name">{a.name}</span>
+            <span className="attachment-chip-size">{formatFileSize(a.size)}</span>
+          </div>
+          <button
+            type="button"
+            className="attachment-chip-remove"
+            onClick={() => onRemove(a.id)}
+            title="Retirer"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ---------- attachments rendered inside a sent user message ---------- */
 export function MessageAttachments({ attachments }) {
   if (!attachments || !attachments.length) return null;
   return (
     <div className="msg-attachments">
-      {attachments.map((a) => {
-        const Icon = iconFor(a.type);
-        return (
-          <div className="msg-attachment-chip" key={a.id}>
-            <Icon size={13} className="attachment-chip-icon" />
+      {attachments.map((a) => (
+        <a
+          className="msg-attachment-card"
+          key={a.id}
+          href={a.url || undefined}
+          target="_blank"
+          rel="noreferrer"
+          title={a.name}
+        >
+          <Preview a={a} size={88} />
+          <div className="msg-attachment-meta">
             <span className="attachment-chip-name">{a.name}</span>
             <span className="attachment-chip-size">{formatFileSize(a.size)}</span>
           </div>
-        );
-      })}
+          {a.url && <ExternalLink size={12} className="msg-attachment-open" />}
+        </a>
+      ))}
     </div>
   );
 }

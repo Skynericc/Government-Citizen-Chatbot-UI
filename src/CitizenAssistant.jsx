@@ -11,6 +11,8 @@ import Expandable from "./components/Expandable.jsx"
 import MessageActions from "./components/MessageActions";
 import ToolPanel from "./components/Toolpanel.jsx";
 import { AttachmentBar, MessageAttachments } from "./components/Attachments.jsx";
+import AudioPlayer from "./components/AudioPlayer.jsx";
+import { useVoiceRecorder } from "./utils/useVoiceRecorder.js";
 import { renderInline, parseMarkdown } from "./utils/Markdown.jsx";
 import ministryLogo from "./assets/ministry-logo.svg";
 
@@ -32,13 +34,12 @@ export default function CitizenAssistant() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [attachments, setAttachments] = useState([]);
   const [attachError, setAttachError] = useState("");
 
+  const recorder = useVoiceRecorder();
+
   const scrollRef = useRef(null);
-  const recordTimerRef = useRef(null);
   const genTimeoutsRef = useRef([]);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -58,7 +59,6 @@ export default function CitizenAssistant() {
 
   useEffect(() => {
     return () => {
-      clearInterval(recordTimerRef.current);
       genTimeoutsRef.current.forEach(clearTimeout);
     };
   }, []);
@@ -106,15 +106,15 @@ export default function CitizenAssistant() {
     });
   }, [language, t]);
 
-  const sendMessage = (rawText) => {
+  const sendMessage = (rawText, audio = null) => {
     const text = rawText.trim();
-    if ((!text && attachments.length === 0) || isGenerating) return;
+    if ((!text && attachments.length === 0 && !audio) || isGenerating) return;
     const userId = `u-${Date.now()}`;
     const assistantId = `a-${Date.now() + 1}`;
 
     setMessages(prev => [
       ...prev,
-      { id: userId, role: "user", content: text, attachments },
+      { id: userId, role: "user", content: text, attachments, audio },
       { id: assistantId, role: "assistant", content: "", phase: "tools", toolStepIndex: 0, feedback: null },
     ]);
     setInput("");
@@ -148,34 +148,32 @@ export default function CitizenAssistant() {
     for (const file of picked) {
       if (next.length >= MAX_FILES) { error = t.maxFiles; break; }
       if (file.size > MAX_FILE_SIZE) { error = t.maxFiles; continue; }
-      next.push({ id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: file.name, size: file.size, type: file.type });
+      next.push({
+        id: `f-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: URL.createObjectURL(file),
+      });
     }
     setAttachments(next);
     setAttachError(error);
   };
 
   const removeAttachment = (id) => {
-    setAttachments(prev => prev.filter(a => a.id !== id));
+    setAttachments(prev => {
+      const target = prev.find(a => a.id === id);
+      if (target?.url) URL.revokeObjectURL(target.url);
+      return prev.filter(a => a.id !== id);
+    });
     setAttachError("");
   };
 
-  const startRecording = () => {
-    setIsRecording(true);
-    setRecordingSeconds(0);
-    recordTimerRef.current = setInterval(() => setRecordingSeconds(s => s + 1), 1000);
-  };
-  const cancelRecording = () => {
-    clearInterval(recordTimerRef.current);
-    setIsRecording(false);
-    setRecordingSeconds(0);
-  };
-  const sendRecording = () => {
-    clearInterval(recordTimerRef.current);
-    setIsRecording(false);
-    const mm = String(Math.floor(recordingSeconds / 60)).padStart(2, "0");
-    const ss = String(recordingSeconds % 60).padStart(2, "0");
-    setRecordingSeconds(0);
-    sendMessage(language === "ar" ? `رسالة صوتية (${mm}:${ss})` : `Message vocal (${mm}:${ss})`);
+  const startRecording = () => recorder.start();
+  const cancelRecording = () => recorder.cancel();
+  const sendRecording = async () => {
+    const result = await recorder.finish();
+    if (result) sendMessage("", result);
   };
 
   const formatTimer = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -291,6 +289,7 @@ export default function CitizenAssistant() {
                     <div className="msg-row msg-row-user" key={m.id}>
                       <div className="assistant-col" style={{ alignItems: "flex-end" }}>
                         <MessageAttachments attachments={m.attachments} />
+                        {m.audio && <AudioPlayer url={m.audio.url} fallbackDuration={m.audio.duration} />}
                         {m.content && <div className="msg-bubble msg-bubble-user">{m.content}</div>}
                       </div>
                     </div>
@@ -344,13 +343,13 @@ export default function CitizenAssistant() {
 
       <footer className="app-footer">
         <div className="app-footer-inner">
-          {isRecording ? (
+          {recorder.isRecording ? (
             <div className="recorder-bar">
               <div className="recorder-indicator">
                 <span className="recorder-dot" />
                 <span>{t.recording}</span>
               </div>
-              <div className="recorder-timer">{formatTimer(recordingSeconds)}</div>
+              <div className="recorder-timer">{formatTimer(recorder.seconds)}</div>
               <div className="recorder-actions">
                 <button className="icon-btn icon-btn-ghost" title={t.cancel} onClick={cancelRecording}>
                   <X size={17} />
@@ -364,6 +363,8 @@ export default function CitizenAssistant() {
             <div className="composer">
               <AttachmentBar attachments={attachments} onRemove={removeAttachment} />
               {attachError && <div className="attach-error">{attachError}</div>}
+              {recorder.error === "permission" && <div className="attach-error">{t.micPermissionError}</div>}
+              {recorder.error === "unsupported" && <div className="attach-error">{t.micUnsupported}</div>}
               <div className="composer-row">
                 <input
                   ref={fileInputRef}
@@ -386,7 +387,7 @@ export default function CitizenAssistant() {
                   <button className="icon-btn" title={t.attach} onClick={openFilePicker} disabled={isGenerating}>
                     <Paperclip size={18} />
                   </button>
-                  <button className="icon-btn" title="Mic" onClick={startRecording} disabled={isGenerating}>
+                  <button className="icon-btn" title={t.recordTooltip} onClick={startRecording} disabled={isGenerating}>
                     <Mic size={18} />
                   </button>
                   {isGenerating ? (
