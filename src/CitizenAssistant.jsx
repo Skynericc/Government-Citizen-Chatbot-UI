@@ -6,14 +6,23 @@ import {
 } from "lucide-react";
 import CSS from "./utils/styles.css?inline"
 import { STRINGS } from "./constants/Strings"
-import { ANSWERS } from "./constants/Answers";
+import { ANSWERS, TOPIC_ORDER } from "./constants/Answers";
 import Expandable from "./components/Expandable.jsx"
 import MessageActions from "./components/MessageActions";
 import ToolPanel from "./components/Toolpanel.jsx";
 import { AttachmentBar, MessageAttachments } from "./components/Attachments.jsx";
 import AudioPlayer from "./components/AudioPlayer.jsx";
 import { useVoiceRecorder } from "./utils/useVoiceRecorder.js";
+/* ------------------------------------------------------------------ */
+/* TODO(backend): Uncomment the import below once a backend           */
+/* ingestion endpoint exists. uploadFile() POSTs files/audio to your   */
+/* server, which should return a durable file reference (remoteId)     */
+/* that can later be attached to chat completion requests so the LLM   */
+/* can read/transcribe the uploaded content.                            */
+/* ------------------------------------------------------------------ */
+// import { uploadFile } from "./utils/Uploadservice.jsx";
 import { renderInline, parseMarkdown } from "./utils/Markdown.jsx";
+import { SourcesList } from "./components/Citations.jsx";
 import ministryLogo from "./assets/ministry-logo.svg";
 
 const MAX_FILES = 5;
@@ -68,9 +77,16 @@ export default function CitizenAssistant() {
     genTimeoutsRef.current = [];
   };
 
-  const startGeneration = useCallback((assistantId) => {
+  // Match a sent question against the suggested prompts to pick a topic-specific
+  // canned answer; free-typed questions that don't match fall back to "default".
+  const resolveTopic = useCallback((text) => {
+    const idx = t.suggested.findIndex((q) => q === text);
+    return idx >= 0 ? TOPIC_ORDER[idx] : "default";
+  }, [t]);
+
+  const startGeneration = useCallback((assistantId, topic) => {
     const steps = t.steps;
-    const answer = ANSWERS[language];
+    const answer = (ANSWERS[topic] && ANSWERS[topic][language]) || ANSWERS.default[language];
 
     // advance tool step index
     let stepIdx = 0;
@@ -85,6 +101,9 @@ export default function CitizenAssistant() {
           const full = answer.text;
           let pos = 0;
           const chunkSize = 4;
+          // citations are known up front, so inline [[n]] marks resolve to
+          // real links as soon as they stream into view
+          setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, citations: answer.citations } : m));
           const streamInterval = setInterval(() => {
             pos += chunkSize;
             const slice = full.slice(0, pos);
@@ -92,7 +111,7 @@ export default function CitizenAssistant() {
             if (pos >= full.length) {
               clearInterval(streamInterval);
               setMessages(prev => prev.map(m => m.id === assistantId ? {
-                ...m, content: full, phase: "done", expandable: {
+                ...m, content: full, phase: "done", citations: answer.citations, expandable: {
                   title: answer.expandableTitle, body: answer.expandableBody,
                 }
               } : m));
@@ -106,11 +125,94 @@ export default function CitizenAssistant() {
     });
   }, [language, t]);
 
+  /* ------------------------------------------------------------------ */
+  /* TODO(backend): Replace the sendMessage function below with the     */
+  /* async version that uploads files/audio before sending. Uncomment   */
+  /* the import of uploadFile at the top of this file.                  */
+  /*                                                                      */
+  /* Expected real implementation:                                        */
+  /*                                                                      */
+  /*   const sendMessage = async (rawText, audio = null) => {            */
+  /*     const text = rawText.trim();                                    */
+  /*     if ((!text && attachments.length === 0 && !audio) || isGenerating) return; */
+  /*     const userId = `u-${Date.now()}`;                               */
+  /*     const assistantId = `a-${Date.now() + 1}`;                      */
+  /*     const topic = resolveTopic(text);                                */
+  /*     let resolvedAttachments = [...attachments];                      */
+  /*     let resolvedAudio = audio;                                       */
+  /*                                                                      */
+  /*     // 1. Upload pending file attachments                            */
+  /*     const uploadedAttachments = [];                                   */
+  /*     for (const att of resolvedAttachments) {                         */
+  /*       try {                                                          */
+  /*         // Convert the blob URL back to a File to upload             */
+  /*         const response = await fetch(att.url);                       */
+  /*         const blob = await response.blob();                          */
+  /*         const file = new File([blob], att.name, { type: att.type }); */
+  /*         const serverResult = await uploadFile(file, {                */
+  /*           onProgress: (pct) => {                                     */
+  /*             // Update attachment status in the UI if desired         */
+  /*             setAttachments(prev => prev.map(a =>                     */
+  /*               a.id === att.id ? { ...a, status: "uploading", progress: pct } : a */
+  /*             ));                                                       */
+  /*           },                                                          */
+  /*         });                                                          */
+  /*         uploadedAttachments.push({                                    */
+  /*           ...att,                                                     */
+  /*           remoteId: serverResult.remoteId,  // durable reference      */
+  /*           uploadedAt: serverResult.uploadedAt,                        */
+  /*         });                                                           */
+  /*       } catch (err) {                                                 */
+  /*         console.error("Upload failed for", att.name, err);            */
+  /*         // Fall back to sending the attachment as local-only          */
+  /*         uploadedAttachments.push(att);                                */
+  /*       }                                                               */
+  /*     }                                                                 */
+  /*     resolvedAttachments = uploadedAttachments;                        */
+  /*                                                                      */
+  /*     // 2. Upload audio recording if present                          */
+  /*     if (resolvedAudio?.blob) {                                       */
+  /*       try {                                                          */
+  /*         const audioFile = new File(                                   */
+  /*           [resolvedAudio.blob],                                       */
+  /*           `recording-${Date.now()}.webm`,                             */
+  /*           { type: resolvedAudio.blob.type || "audio/webm" }           */
+  /*         );                                                            */
+  /*         const serverResult = await uploadFile(audioFile, {            */
+  /*           onProgress: (pct) => console.log("audio upload %", pct),   */
+  /*         });                                                           */
+  /*         resolvedAudio = {                                             */
+  /*           ...resolvedAudio,                                           */
+  /*           remoteId: serverResult.remoteId,                            */
+  /*         };                                                            */
+  /*       } catch (err) {                                                 */
+  /*         console.error("Audio upload failed", err);                    */
+  /*         // Keep the local audio reference so the user can still       */
+  /*         // play it back, even if server persistence failed.           */
+  /*       }                                                               */
+  /*     }                                                                 */
+  /*                                                                      */
+  /*     setMessages(prev => [                                            */
+  /*       ...prev,                                                       */
+  /*       { id: userId, role: "user", content: text,                      */
+  /*         attachments: resolvedAttachments, audio: resolvedAudio },     */
+  /*       { id: assistantId, role: "assistant", content: "",             */
+  /*         phase: "tools", toolStepIndex: 0, feedback: null },           */
+  /*     ]);                                                               */
+  /*     setInput("");                                                     */
+  /*     setAttachments([]);                                               */
+  /*     setAttachError("");                                               */
+  /*     setIsGenerating(true);                                            */
+  /*     startGeneration(assistantId, topic);                              */
+  /*   };                                                                  */
+  /* ------------------------------------------------------------------ */
+
   const sendMessage = (rawText, audio = null) => {
     const text = rawText.trim();
     if ((!text && attachments.length === 0 && !audio) || isGenerating) return;
     const userId = `u-${Date.now()}`;
     const assistantId = `a-${Date.now() + 1}`;
+    const topic = resolveTopic(text);
 
     setMessages(prev => [
       ...prev,
@@ -121,7 +223,7 @@ export default function CitizenAssistant() {
     setAttachments([]);
     setAttachError("");
     setIsGenerating(true);
-    startGeneration(assistantId);
+    startGeneration(assistantId, topic);
   };
 
   const stopGeneration = () => {
@@ -312,7 +414,7 @@ export default function CitizenAssistant() {
                       )}
                       {m.phase !== "tools" && (
                         <div className="msg-bubble msg-bubble-assistant">
-                          {parseMarkdown(m.content)}
+                          {parseMarkdown(m.content, m.citations)}
                           {m.phase === "streaming" && <span className="caret" />}
                           {m.phase === "done" && m.expandable && (
                             <Expandable
@@ -321,6 +423,9 @@ export default function CitizenAssistant() {
                               seeMore={t.seeMore}
                               seeLess={t.seeLess}
                             />
+                          )}
+                          {m.phase === "done" && (
+                            <SourcesList citations={m.citations} title={t.sourcesTitle} />
                           )}
                         </div>
                       )}

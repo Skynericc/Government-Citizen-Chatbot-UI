@@ -4,6 +4,45 @@ import { useRef, useState, useCallback } from "react";
 /* Real microphone recording via the MediaRecorder API.                */
 /* No backend: the recorded Blob is kept client-side as an object URL  */
 /* so the citizen can play their own message back after sending it.   */
+/*                                                                      */
+/* When a backend ingestion endpoint exists, the caller (the main       */
+/* component) should upload the Blob returned by finish() via the       */
+/* uploadFile() utility, which would POST it to /api/attachments and    */
+/* return a remoteId. That remoteId can then be stored alongside the    */
+/* message for later referencing in chat completion requests.           */
+/*                                                                      */
+/* Expected real implementation, once a backend exists:                 */
+/*                                                                      */
+/*   // In CitizenAssistant.jsx, instead of directly appending the      */
+/*   // local { url, blob } to the message, call uploadFile():          */
+/*   //                                                                */
+/*   //   import { uploadFile } from "./utils/Uploadservice.jsx";      */
+/*   //   import { useVoiceRecorder } from "./utils/useVoiceRecorder"; */
+/*   //                                                                */
+/*   //   const sendRecording = async () => {                          */
+/*   //     const result = await recorder.finish();                    */
+/*   //     if (!result) return;                                       */
+/*   //     const { url, blob, duration } = result;                    */
+/*   //     try {                                                       */
+/*   //       // 1. Upload the audio blob to the backend               */
+/*   //       const serverResult = await uploadFile(                   */
+/*   //         new File([blob], `recording-${Date.now()}.webm`, {     */
+/*   //           type: blob.type || "audio/webm",                     */
+/*   //         }),                                                     */
+/*   //         { onProgress: (pct) => console.log("upload %", pct) }  */
+/*   //       );                                                        */
+/*   //       // 2. Pass the server response to sendMessage            */
+/*   //       sendMessage("", {                                        */
+/*   //         url,              // keep local URL for instant playback */
+/*   //         remoteId: serverResult.remoteId, // backend reference   */
+/*   //         duration,                                              */
+/*   //       });                                                       */
+/*   //     } catch (err) {                                             */
+/*   //       console.error("Audio upload failed", err);               */
+/*   //       // Optionally still send the message with local audio    */
+/*   //       sendMessage("", { url, blob, duration });                */
+/*   //     }                                                           */
+/*   //   };                                                            */
 /* ------------------------------------------------------------------ */
 
 export function useVoiceRecorder() {
