@@ -128,30 +128,38 @@ export default function CitizenAssistant() {
   /* ------------------------------------------------------------------ */
   /* TODO(backend): Replace the sendMessage function below with the     */
   /* async version that uploads files/audio before sending. Uncomment   */
-  /* the import of uploadFile at the top of this file.                  */
+  /* the import of uploadFile at the top of this file. This is the ONE  */
+  /* place audio/file uploads should happen — see the note in           */
+  /* useVoiceRecorder.js, which intentionally does not upload anything  */
+  /* itself so there's a single upload code path to reason about.       */
+  /*                                                                      */
+  /* Note the new `isUploading` state: sendMessage becomes async and     */
+  /* does network work *before* pushing the message, so the send/attach/ */
+  /* mic buttons need a guard for that window too — `isGenerating` alone */
+  /* only covers the streaming-answer phase, and without this a fast     */
+  /* double-click on Send while uploads are in flight would fire         */
+  /* sendMessage twice and duplicate the upload + message.                */
   /*                                                                      */
   /* Expected real implementation:                                        */
   /*                                                                      */
+  /*   const [isUploading, setIsUploading] = useState(false);            */
+  /*                                                                      */
   /*   const sendMessage = async (rawText, audio = null) => {            */
   /*     const text = rawText.trim();                                    */
-  /*     if ((!text && attachments.length === 0 && !audio) || isGenerating) return; */
+  /*     if ((!text && attachments.length === 0 && !audio) || isGenerating || isUploading) return; */
   /*     const userId = `u-${Date.now()}`;                               */
   /*     const assistantId = `a-${Date.now() + 1}`;                      */
   /*     const topic = resolveTopic(text);                                */
-  /*     let resolvedAttachments = [...attachments];                      */
+  /*     setIsUploading(true);                                            */
   /*     let resolvedAudio = audio;                                       */
   /*                                                                      */
-  /*     // 1. Upload pending file attachments                            */
-  /*     const uploadedAttachments = [];                                   */
-  /*     for (const att of resolvedAttachments) {                         */
+  /*     // 1. Upload pending file attachments (att.file is the original  */
+  /*     //    File from handleFilesSelected — no blob-URL round-trip)    */
+  /*     const uploadedAttachments = [];                                  */
+  /*     for (const att of attachments) {                                 */
   /*       try {                                                          */
-  /*         // Convert the blob URL back to a File to upload             */
-  /*         const response = await fetch(att.url);                       */
-  /*         const blob = await response.blob();                          */
-  /*         const file = new File([blob], att.name, { type: att.type }); */
-  /*         const serverResult = await uploadFile(file, {                */
+  /*         const serverResult = await uploadFile(att.file, {            */
   /*           onProgress: (pct) => {                                     */
-  /*             // Update attachment status in the UI if desired         */
   /*             setAttachments(prev => prev.map(a =>                     */
   /*               a.id === att.id ? { ...a, status: "uploading", progress: pct } : a */
   /*             ));                                                       */
@@ -168,9 +176,11 @@ export default function CitizenAssistant() {
   /*         uploadedAttachments.push(att);                                */
   /*       }                                                               */
   /*     }                                                                 */
-  /*     resolvedAttachments = uploadedAttachments;                        */
   /*                                                                      */
-  /*     // 2. Upload audio recording if present                          */
+  /*     // 2. Upload the voice recording, if any. Same shape either way: */
+  /*     //    { url, blob, duration, remoteId? } — remoteId is only set  */
+  /*     //    on success, so downstream code can branch on its presence  */
+  /*     //    without worrying about missing fields.                     */
   /*     if (resolvedAudio?.blob) {                                       */
   /*       try {                                                          */
   /*         const audioFile = new File(                                   */
@@ -181,21 +191,19 @@ export default function CitizenAssistant() {
   /*         const serverResult = await uploadFile(audioFile, {            */
   /*           onProgress: (pct) => console.log("audio upload %", pct),   */
   /*         });                                                           */
-  /*         resolvedAudio = {                                             */
-  /*           ...resolvedAudio,                                           */
-  /*           remoteId: serverResult.remoteId,                            */
-  /*         };                                                            */
+  /*         resolvedAudio = { ...resolvedAudio, remoteId: serverResult.remoteId }; */
   /*       } catch (err) {                                                 */
   /*         console.error("Audio upload failed", err);                    */
-  /*         // Keep the local audio reference so the user can still       */
-  /*         // play it back, even if server persistence failed.           */
+  /*         // Keep the local blob/url so the user can still play it      */
+  /*         // back even though server persistence failed (no remoteId).  */
   /*       }                                                               */
   /*     }                                                                 */
   /*                                                                      */
+  /*     setIsUploading(false);                                           */
   /*     setMessages(prev => [                                            */
   /*       ...prev,                                                       */
   /*       { id: userId, role: "user", content: text,                      */
-  /*         attachments: resolvedAttachments, audio: resolvedAudio },     */
+  /*         attachments: uploadedAttachments, audio: resolvedAudio },     */
   /*       { id: assistantId, role: "assistant", content: "",             */
   /*         phase: "tools", toolStepIndex: 0, feedback: null },           */
   /*     ]);                                                               */
@@ -256,6 +264,7 @@ export default function CitizenAssistant() {
         size: file.size,
         type: file.type,
         url: URL.createObjectURL(file),
+        file, // kept so a future upload step can send it directly (see uploadFile TODO below)
       });
     }
     setAttachments(next);
@@ -466,7 +475,7 @@ export default function CitizenAssistant() {
             </div>
           ) : (
             <div className="composer">
-              <AttachmentBar attachments={attachments} onRemove={removeAttachment} />
+              <AttachmentBar attachments={attachments} onRemove={removeAttachment} uploadingLabel={t.uploading} />
               {attachError && <div className="attach-error">{attachError}</div>}
               {recorder.error === "permission" && <div className="attach-error">{t.micPermissionError}</div>}
               {recorder.error === "unsupported" && <div className="attach-error">{t.micUnsupported}</div>}
