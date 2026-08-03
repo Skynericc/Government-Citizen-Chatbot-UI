@@ -13,7 +13,13 @@ import ToolPanel from "./components/Toolpanel.jsx";
 import { AttachmentBar, MessageAttachments } from "./components/Attachments.jsx";
 import AudioPlayer from "./components/AudioPlayer.jsx";
 import { useVoiceRecorder } from "./utils/useVoiceRecorder.js";
-import { streamChat, getOrCreateSessionId, isAgentConfigured } from "./utils/AgentService.js";
+import { streamChat, isAgentConfigured } from "./utils/AgentService.js";
+import {
+  addAssistantMessage,
+  addUserMessage,
+  getHistory,
+  getSessionId,
+} from "./utils/ConversationService.js";
 /* ------------------------------------------------------------------ */
 /* TODO(backend): Uncomment the import below once a backend           */
 /* ingestion endpoint exists. uploadFile() POSTs files/audio to your   */
@@ -57,9 +63,9 @@ export default function CitizenAssistant() {
   // running conversation history the agent expects on every call, whether
   // this is the session's first question (drives its cache), and an
   // AbortController so "stop generating" can cancel an in-flight fetch too.
-  const sessionIdRef = useRef(getOrCreateSessionId());
-  const historyRef = useRef([]);
-  const isFirstQuestionRef = useRef(true);
+  const sessionIdRef = useRef(getSessionId());
+  const historyRef = useRef(getHistory());
+  const isFirstQuestionRef = useRef(historyRef.current.length === 0);
   const abortControllerRef = useRef(null);
 
   const t = STRINGS[language];
@@ -96,8 +102,9 @@ export default function CitizenAssistant() {
   // Pushes the finished turn into the running history the real backend
   // expects on every call (contrat §1.2), and flips is_first_question off.
   const finalizeHistory = (userText, assistantText) => {
-    if (userText) historyRef.current.push({ role: "user", content: userText });
-    if (assistantText) historyRef.current.push({ role: "assistant", content: assistantText });
+    if (!userText) return;
+    historyRef.current = addUserMessage(userText);
+    historyRef.current = addAssistantMessage(assistantText);
     isFirstQuestionRef.current = false;
   };
 
@@ -217,9 +224,6 @@ export default function CitizenAssistant() {
         setMessages(prev => prev.map(m => m.id === assistantId
           ? { ...m, content: message, phase: "done", isError: true }
           : m));
-        // Keep the user's turn in history even on failure, so the next
-        // question retains conversational context.
-        finalizeHistory(userText, "");
         setIsGenerating(false);
         abortControllerRef.current = null;
       },
@@ -558,6 +562,7 @@ export default function CitizenAssistant() {
                         <MessageActions
                           t={t}
                           text={m.content}
+                          language={language}
                           feedback={m.feedback}
                           onFeedback={(v) => handleFeedback(m.id, v)}
                         />

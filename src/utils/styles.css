@@ -307,7 +307,9 @@
 }
 
 /* ---------- Message actions ---------- */
+.msg-actions-wrap { display: flex; flex-direction: column; gap: 4px; }
 .msg-actions { display: flex; gap: 2px; padding-inline-start: 2px; }
+.tts-error { font-size: 11.5px; color: var(--danger); padding-inline-start: 2px; }
 .icon-btn {
   border: none; background: transparent;
   color: var(--muted);
