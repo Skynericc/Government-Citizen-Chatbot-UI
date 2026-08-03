@@ -177,6 +177,11 @@
   border-radius: 14px;
   background: #fff;
 }
+.msg-bubble-error {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger) 5%, white);
+  color: var(--danger);
+}
 
 .msg-heading { font-size: 15.5px; font-weight: 650; margin: 10px 0 4px; }
 .msg-paragraph { margin: 0 0 8px; }

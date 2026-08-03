@@ -13,6 +13,7 @@ import ToolPanel from "./components/Toolpanel.jsx";
 import { AttachmentBar, MessageAttachments } from "./components/Attachments.jsx";
 import AudioPlayer from "./components/AudioPlayer.jsx";
 import { useVoiceRecorder } from "./utils/useVoiceRecorder.js";
+import { streamChat, getOrCreateSessionId, isAgentConfigured } from "./utils/AgentService.js";
 /* ------------------------------------------------------------------ */
 /* TODO(backend): Uncomment the import below once a backend           */
 /* ingestion endpoint exists. uploadFile() POSTs files/audio to your   */
@@ -52,6 +53,14 @@ export default function CitizenAssistant() {
   const genTimeoutsRef = useRef([]);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  // Real-backend bookkeeping (contrat §1.2): a stable session_id, the
+  // running conversation history the agent expects on every call, whether
+  // this is the session's first question (drives its cache), and an
+  // AbortController so "stop generating" can cancel an in-flight fetch too.
+  const sessionIdRef = useRef(getOrCreateSessionId());
+  const historyRef = useRef([]);
+  const isFirstQuestionRef = useRef(true);
+  const abortControllerRef = useRef(null);
 
   const t = STRINGS[language];
 
@@ -84,19 +93,35 @@ export default function CitizenAssistant() {
     return idx >= 0 ? TOPIC_ORDER[idx] : "default";
   }, [t]);
 
-  const startGeneration = useCallback((assistantId, topic) => {
+  // Pushes the finished turn into the running history the real backend
+  // expects on every call (contrat §1.2), and flips is_first_question off.
+  const finalizeHistory = (userText, assistantText) => {
+    if (userText) historyRef.current.push({ role: "user", content: userText });
+    if (assistantText) historyRef.current.push({ role: "assistant", content: assistantText });
+    isFirstQuestionRef.current = false;
+  };
+
+  const startDemoGeneration = useCallback((assistantId, topic, userText) => {
     const steps = t.steps;
     const answer = (ANSWERS[topic] && ANSWERS[topic][language]) || ANSWERS.default[language];
 
-    // advance tool step index
-    let stepIdx = 0;
-    setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, toolStepIndex: 0, phase: "tools" } : m));
+    setMessages(prev => prev.map(m => m.id === assistantId
+      ? { ...m, phase: "tools", tools: [], citizenLabel: steps[0]?.label || "" }
+      : m));
 
-    steps.forEach((_, idx) => {
+    steps.forEach((step, idx) => {
       const to = setTimeout(() => {
-        stepIdx = idx + 1;
-        setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, toolStepIndex: stepIdx } : m));
-        if (stepIdx === steps.length) {
+        setMessages(prev => prev.map(m => {
+          if (m.id !== assistantId) return m;
+          const now = Date.now();
+          const tools = [...m.tools, {
+            callId: `demo-${idx}`, name: step.name, status: "done",
+            output: step.summary, startedAt: now - 450, endedAt: now,
+          }];
+          return { ...m, tools, citizenLabel: steps[idx + 1]?.label || step.label };
+        }));
+
+        if (idx === steps.length - 1) {
           // start streaming text
           const full = answer.text;
           let pos = 0;
@@ -115,6 +140,7 @@ export default function CitizenAssistant() {
                   title: answer.expandableTitle, body: answer.expandableBody,
                 }
               } : m));
+              finalizeHistory(userText, full);
               setIsGenerating(false);
             }
           }, 18);
@@ -124,6 +150,81 @@ export default function CitizenAssistant() {
       genTimeoutsRef.current.push(to);
     });
   }, [language, t]);
+
+  /* ------------------------------------------------------------------ */
+  /* Real integration (contrat_api_frontend.pdf §1) — POST {agent}/chat,  */
+  /* streamed as SSE via utils/AgentService.js. Used whenever              */
+  /* VITE_AGENT_URL is configured; otherwise sendMessage falls back to     */
+  /* startDemoGeneration above so the local demo keeps working with no     */
+  /* backend at all.                                                        */
+  /* ------------------------------------------------------------------ */
+  const startRealGeneration = useCallback((assistantId, userText) => {
+    setMessages(prev => prev.map(m => m.id === assistantId
+      ? { ...m, phase: "tools", tools: [], citizenLabel: t.citizenGenericLabel }
+      : m));
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    let accumulated = "";
+
+    streamChat({
+      userText,
+      sessionId: sessionIdRef.current,
+      history: historyRef.current,
+      isFirstQuestion: isFirstQuestionRef.current,
+      inputMode: "text",
+      signal: controller.signal,
+
+      onToken: (delta) => {
+        accumulated += delta;
+        setMessages(prev => prev.map(m => m.id === assistantId
+          ? { ...m, content: accumulated, phase: "streaming" }
+          : m));
+      },
+
+      onToolStart: ({ callId, name }) => {
+        setMessages(prev => prev.map(m => m.id === assistantId
+          ? { ...m, tools: [...m.tools, { callId, name, status: "running", startedAt: Date.now() }] }
+          : m));
+      },
+
+      onToolEnd: ({ callId, output }) => {
+        setMessages(prev => prev.map(m => m.id === assistantId
+          ? {
+              ...m,
+              tools: m.tools.map(tool => tool.callId === callId
+                ? { ...tool, status: "done", output, endedAt: Date.now() }
+                : tool),
+            }
+          : m));
+      },
+
+      onDone: ({ text }) => {
+        // The agent's own event carries the authoritative final text —
+        // used as-is even if it differs slightly from the streamed tokens.
+        const finalText = text || accumulated;
+        setMessages(prev => prev.map(m => m.id === assistantId
+          ? { ...m, content: finalText, phase: "done" }
+          : m));
+        finalizeHistory(userText, finalText);
+        setIsGenerating(false);
+        abortControllerRef.current = null;
+      },
+
+      onError: (err) => {
+        console.error("Agent error:", err);
+        const message = err.kind === "rate_limit" ? t.rateLimitedMessage : t.agentErrorGeneric;
+        setMessages(prev => prev.map(m => m.id === assistantId
+          ? { ...m, content: message, phase: "done", isError: true }
+          : m));
+        // Keep the user's turn in history even on failure, so the next
+        // question retains conversational context.
+        finalizeHistory(userText, "");
+        setIsGenerating(false);
+        abortControllerRef.current = null;
+      },
+    });
+  }, [t]);
 
   /* ------------------------------------------------------------------ */
   /* TODO(backend): Replace the sendMessage function below with the     */
@@ -205,13 +306,17 @@ export default function CitizenAssistant() {
   /*       { id: userId, role: "user", content: text,                      */
   /*         attachments: uploadedAttachments, audio: resolvedAudio },     */
   /*       { id: assistantId, role: "assistant", content: "",             */
-  /*         phase: "tools", toolStepIndex: 0, feedback: null },           */
+  /*         phase: "tools", tools: [], citizenLabel: "", feedback: null }, */
   /*     ]);                                                               */
   /*     setInput("");                                                     */
   /*     setAttachments([]);                                               */
   /*     setAttachError("");                                               */
   /*     setIsGenerating(true);                                            */
-  /*     startGeneration(assistantId, topic);                              */
+  /*     if (isAgentConfigured() && text) {                                */
+  /*       startRealGeneration(assistantId, text);                         */
+  /*     } else {                                                          */
+  /*       startDemoGeneration(assistantId, topic, text);                  */
+  /*     }                                                                 */
   /*   };                                                                  */
   /* ------------------------------------------------------------------ */
 
@@ -220,22 +325,33 @@ export default function CitizenAssistant() {
     if ((!text && attachments.length === 0 && !audio) || isGenerating) return;
     const userId = `u-${Date.now()}`;
     const assistantId = `a-${Date.now() + 1}`;
-    const topic = resolveTopic(text);
 
     setMessages(prev => [
       ...prev,
       { id: userId, role: "user", content: text, attachments, audio },
-      { id: assistantId, role: "assistant", content: "", phase: "tools", toolStepIndex: 0, feedback: null },
+      { id: assistantId, role: "assistant", content: "", phase: "tools", tools: [], citizenLabel: "", feedback: null },
     ]);
     setInput("");
     setAttachments([]);
     setAttachError("");
     setIsGenerating(true);
-    startGeneration(assistantId, topic);
+
+    // The real backend only has a plain-text chat contract for now (no ASR
+    // or file-upload endpoints wired yet — see the integration roadmap), so
+    // voice-only turns keep using the local demo simulation regardless of
+    // VITE_AGENT_URL, and attachments are shown in the bubble but not sent.
+    if (isAgentConfigured() && text) {
+      startRealGeneration(assistantId, text);
+    } else {
+      const topic = resolveTopic(text);
+      startDemoGeneration(assistantId, topic, text);
+    }
   };
 
   const stopGeneration = () => {
     clearGenTimeouts();
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setIsGenerating(false);
     setMessages(prev => prev.map(m =>
       m.phase && m.phase !== "done" ? { ...m, phase: "done" } : m
@@ -415,14 +531,14 @@ export default function CitizenAssistant() {
                     <div className="assistant-col">
                       {showTools && (
                         <ToolPanel
-                          steps={t.steps}
-                          activeIndex={m.toolStepIndex}
+                          tools={m.tools}
+                          citizenLabel={m.citizenLabel}
                           detailed={detailedMode}
                           t={t}
                         />
                       )}
                       {m.phase !== "tools" && (
-                        <div className="msg-bubble msg-bubble-assistant">
+                        <div className={`msg-bubble msg-bubble-assistant${m.isError ? " msg-bubble-error" : ""}`}>
                           {parseMarkdown(m.content, m.citations)}
                           {m.phase === "streaming" && <span className="caret" />}
                           {m.phase === "done" && m.expandable && (
