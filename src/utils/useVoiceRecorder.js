@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from "react";
+import { convertAudioBlobToWavBlob } from "./wavEncoder.js";
 
 /* ------------------------------------------------------------------ */
 /* Real microphone recording via the MediaRecorder API.                */
@@ -25,6 +26,7 @@ export function useVoiceRecorder() {
   const timerRef = useRef(null);
   const pendingActionRef = useRef(null); // "send" | "cancel"
   const resolveRef = useRef(null);
+  const durationRef = useRef(0);
 
   const isSupported =
     typeof navigator !== "undefined" &&
@@ -36,10 +38,12 @@ export function useVoiceRecorder() {
     streamRef.current?.getTracks().forEach((tr) => tr.stop());
     streamRef.current = null;
     clearInterval(timerRef.current);
+    timerRef.current = null;
   };
 
   const start = useCallback(async () => {
     setError("");
+    durationRef.current = 0;
     if (!isSupported) {
       setError("unsupported");
       return;
@@ -58,16 +62,31 @@ export function useVoiceRecorder() {
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         cleanupStream();
         const action = pendingActionRef.current;
         pendingActionRef.current = null;
-        if (action === "send" && chunksRef.current.length) {
-          const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-          const url = URL.createObjectURL(blob);
-          resolveRef.current?.({ url, blob, duration: seconds });
-        } else {
-          resolveRef.current?.(null);
+
+        if (action === "cancel") {
+          resolveRef.current?.({ kind: "cancelled" });
+          resolveRef.current = null;
+          return;
+        }
+
+        if (!chunksRef.current.length) {
+          resolveRef.current?.({ kind: "empty" });
+          resolveRef.current = null;
+          return;
+        }
+
+        try {
+          const sourceBlob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+          const wavBlob = await convertAudioBlobToWavBlob(sourceBlob);
+          const url = URL.createObjectURL(wavBlob);
+          resolveRef.current?.({ kind: "audio", url, blob: wavBlob, duration: durationRef.current });
+        } catch {
+          setError("encode");
+          resolveRef.current?.({ kind: "error" });
         }
         resolveRef.current = null;
       };
@@ -75,11 +94,14 @@ export function useVoiceRecorder() {
       recorder.start();
       setIsRecording(true);
       setSeconds(0);
-      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+      timerRef.current = setInterval(() => {
+        durationRef.current += 1;
+        setSeconds(durationRef.current);
+      }, 1000);
     } catch (err) {
       setError("permission");
     }
-  }, [isSupported, seconds]);
+  }, [isSupported]);
 
   const stopWith = (action) =>
     new Promise((resolve) => {
@@ -87,7 +109,7 @@ export function useVoiceRecorder() {
       setIsRecording(false);
       if (!recorder || recorder.state === "inactive") {
         cleanupStream();
-        resolve(null);
+        resolve({ kind: action === "cancel" ? "cancelled" : "empty" });
         return;
       }
       pendingActionRef.current = action;

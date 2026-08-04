@@ -14,6 +14,7 @@ import { AttachmentBar, MessageAttachments } from "./components/Attachments.jsx"
 import AudioPlayer from "./components/AudioPlayer.jsx";
 import { useVoiceRecorder } from "./utils/useVoiceRecorder.js";
 import { streamChat, isAgentConfigured } from "./utils/AgentService.js";
+import { isASRConfigured, transcribeSpeech } from "./utils/ASRService.js";
 import {
   addAssistantMessage,
   addUserMessage,
@@ -52,6 +53,7 @@ export default function CitizenAssistant() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [attachments, setAttachments] = useState([]);
   const [attachError, setAttachError] = useState("");
+  const [voiceError, setVoiceError] = useState("");
 
   const recorder = useVoiceRecorder();
 
@@ -165,7 +167,7 @@ export default function CitizenAssistant() {
   /* startDemoGeneration above so the local demo keeps working with no     */
   /* backend at all.                                                        */
   /* ------------------------------------------------------------------ */
-  const startRealGeneration = useCallback((assistantId, userText) => {
+  const startRealGeneration = useCallback((assistantId, userText, inputMode = "text") => {
     setMessages(prev => prev.map(m => m.id === assistantId
       ? { ...m, phase: "tools", tools: [], citizenLabel: t.citizenGenericLabel }
       : m));
@@ -179,7 +181,7 @@ export default function CitizenAssistant() {
       sessionId: sessionIdRef.current,
       history: historyRef.current,
       isFirstQuestion: isFirstQuestionRef.current,
-      inputMode: "text",
+      inputMode,
       signal: controller.signal,
 
       onToken: (delta) => {
@@ -324,7 +326,7 @@ export default function CitizenAssistant() {
   /*   };                                                                  */
   /* ------------------------------------------------------------------ */
 
-  const sendMessage = (rawText, audio = null) => {
+  const sendMessage = (rawText, audio = null, inputMode = "text") => {
     const text = rawText.trim();
     if ((!text && attachments.length === 0 && !audio) || isGenerating) return;
     const userId = `u-${Date.now()}`;
@@ -338,6 +340,7 @@ export default function CitizenAssistant() {
     setInput("");
     setAttachments([]);
     setAttachError("");
+    setVoiceError("");
     setIsGenerating(true);
 
     // The real backend only has a plain-text chat contract for now (no ASR
@@ -345,7 +348,7 @@ export default function CitizenAssistant() {
     // voice-only turns keep using the local demo simulation regardless of
     // VITE_AGENT_URL, and attachments are shown in the bubble but not sent.
     if (isAgentConfigured() && text) {
-      startRealGeneration(assistantId, text);
+      startRealGeneration(assistantId, text, inputMode);
     } else {
       const topic = resolveTopic(text);
       startDemoGeneration(assistantId, topic, text);
@@ -403,8 +406,41 @@ export default function CitizenAssistant() {
   const startRecording = () => recorder.start();
   const cancelRecording = () => recorder.cancel();
   const sendRecording = async () => {
+    setVoiceError("");
     const result = await recorder.finish();
-    if (result) sendMessage("", result);
+    if (!result || result.kind === "cancelled") return;
+    if (result.kind === "empty") {
+      setVoiceError(t.emptyRecording || "No audio recorded.");
+      return;
+    }
+    if (result.kind !== "audio") {
+      setVoiceError(t.voicePrepError || "Could not prepare the recording.");
+      return;
+    }
+
+    if (!isASRConfigured()) {
+      sendMessage("", result, "voice");
+      return;
+    }
+
+    try {
+      const transcription = await transcribeSpeech({ blob: result.blob });
+      sendMessage(transcription, result, "voice");
+    } catch (err) {
+      console.error("ASR error:", err);
+      if (err.kind === "aborted") return;
+      if (err.kind === "empty") {
+        setVoiceError(err.message || t.emptyTranscription || "No transcription could be produced.");
+      } else if (err.kind === "unavailable") {
+        setVoiceError(err.message || t.asrUnavailable || "ASR service unavailable.");
+      } else if (err.kind === "network") {
+        setVoiceError(t.networkError || "Network error while transcribing audio.");
+      } else if (err.kind === "invalid_response") {
+        setVoiceError(t.invalidAsrResponse || "Invalid transcription response.");
+      } else {
+        setVoiceError(err.message || t.voicePrepError || "Could not transcribe the recording.");
+      }
+    }
   };
 
   const formatTimer = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -598,8 +634,10 @@ export default function CitizenAssistant() {
             <div className="composer">
               <AttachmentBar attachments={attachments} onRemove={removeAttachment} uploadingLabel={t.uploading} />
               {attachError && <div className="attach-error">{attachError}</div>}
+              {voiceError && <div className="attach-error">{voiceError}</div>}
               {recorder.error === "permission" && <div className="attach-error">{t.micPermissionError}</div>}
               {recorder.error === "unsupported" && <div className="attach-error">{t.micUnsupported}</div>}
+              {recorder.error === "encode" && <div className="attach-error">{t.voicePrepError || "Could not prepare the recording."}</div>}
               <div className="composer-row">
                 <input
                   ref={fileInputRef}
