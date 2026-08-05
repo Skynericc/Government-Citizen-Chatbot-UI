@@ -18,26 +18,6 @@ export function isAgentConfigured() {
   return Boolean(AGENT_URL);
 }
 
-const SESSION_STORAGE_KEY = "citizen-assistant-session-id";
-
-// One session_id per tab, kept stable across reloads via sessionStorage.
-// The contract requires it to be generated and kept safe by the frontend —
-// it doesn't mandate persistence across tabs/reloads, but keeping it makes
-// refresh-during-testing less annoying without changing backend behaviour.
-export function getOrCreateSessionId() {
-  try {
-    const existing = sessionStorage.getItem(SESSION_STORAGE_KEY);
-    if (existing) return existing;
-    const id = crypto.randomUUID();
-    sessionStorage.setItem(SESSION_STORAGE_KEY, id);
-    return id;
-  } catch {
-    // sessionStorage unavailable (privacy mode, etc.) — fall back to an
-    // id that's at least stable for the lifetime of this page load.
-    return crypto.randomUUID();
-  }
-}
-
 /**
  * Streams one chat turn from the agent service (contrat §1).
  *

@@ -45,7 +45,7 @@ export default function ToolPanel({ tools = [], citizenLabel, detailed, t }) {
 
   return (
     <div className="tool-detailed">
-      <button className="tool-detailed-toggle" onClick={() => setExpanded((e) => !e)}>
+      <button type="button" className="tool-detailed-toggle" onClick={() => setExpanded((e) => !e)}>
         <span>{t.toolPanelTitle}</span>
         {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
       </button>

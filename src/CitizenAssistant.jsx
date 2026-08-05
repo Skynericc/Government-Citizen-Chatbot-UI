@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send, Mic, Square, X, Check, Copy, Volume2, ThumbsUp, ThumbsDown,
   Flag, Share2, Settings, ChevronDown, ChevronUp, Loader2,
-  CheckCircle2, Landmark, Paperclip
+  CheckCircle2, Landmark, Paperclip, RotateCcw
 } from "lucide-react";
 import CSS from "./utils/styles.css?inline"
 import { STRINGS } from "./constants/Strings"
@@ -18,8 +18,7 @@ import { isASRConfigured, transcribeSpeech } from "./utils/ASRService.js";
 import {
   addAssistantMessage,
   addUserMessage,
-  getHistory,
-  getSessionId,
+  resetSession,
 } from "./utils/ConversationService.js";
 /* ------------------------------------------------------------------ */
 /* TODO(backend): Uncomment the import below once a backend           */
@@ -43,7 +42,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 export default function CitizenAssistant() {
   const [language, setLanguage] = useState("fr");
   const [primaryColor, setPrimaryColor] = useState("#1175BA");
-  const [institutionName, setInstitutionName] = useState("Royaume du Maroc — Ministère de la Transition Numérique");
+  const [institutionName, setInstitutionName] = useState("Royaume du Maroc — Ministère de la Transition Numérique et de la Réforme de l'Administration");
   const [customSubtitle, setCustomSubtitle] = useState("");
   const [detailedMode, setDetailedMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -65,9 +64,12 @@ export default function CitizenAssistant() {
   // running conversation history the agent expects on every call, whether
   // this is the session's first question (drives its cache), and an
   // AbortController so "stop generating" can cancel an in-flight fetch too.
-  const sessionIdRef = useRef(getSessionId());
-  const historyRef = useRef(getHistory());
-  const isFirstQuestionRef = useRef(historyRef.current.length === 0);
+  // Actual values are set by resetConversation() on mount below — per the
+  // UI spec the assistant must not retain history across sessions, so a
+  // fresh session_id/history is generated on every page load, not restored.
+  const sessionIdRef = useRef(null);
+  const historyRef = useRef([]);
+  const isFirstQuestionRef = useRef(true);
   const abortControllerRef = useRef(null);
 
   const t = STRINGS[language];
@@ -94,6 +96,29 @@ export default function CitizenAssistant() {
     genTimeoutsRef.current = [];
   };
 
+  // Starts a brand-new conversation: cancels any in-flight generation,
+  // clears the visible transcript, and gets a fresh session_id/history
+  // from ConversationService. Used by the "New conversation" button and
+  // once on mount, so a page refresh behaves identically — the UI spec
+  // requires the assistant not retain a history of past conversations,
+  // so this intentionally does NOT restore anything from a prior session.
+  const resetConversation = useCallback(() => {
+    clearGenTimeouts();
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsGenerating(false);
+    setMessages([]);
+    sessionIdRef.current = resetSession();
+    historyRef.current = [];
+    isFirstQuestionRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    resetConversation();
+    // Intentionally run once on mount only — see resetConversation's comment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Match a sent question against the suggested prompts to pick a topic-specific
   // canned answer; free-typed questions that don't match fall back to "default".
   const resolveTopic = useCallback((text) => {
@@ -103,10 +128,15 @@ export default function CitizenAssistant() {
 
   // Pushes the finished turn into the running history the real backend
   // expects on every call (contrat §1.2), and flips is_first_question off.
+  // Called even when assistantText is empty (an agent-side failure) so the
+  // question itself isn't silently dropped from context — only the
+  // assistant turn is skipped in that case, not the user's.
   const finalizeHistory = (userText, assistantText) => {
     if (!userText) return;
     historyRef.current = addUserMessage(userText);
-    historyRef.current = addAssistantMessage(assistantText);
+    if (assistantText) {
+      historyRef.current = addAssistantMessage(assistantText);
+    }
     isFirstQuestionRef.current = false;
   };
 
@@ -226,6 +256,10 @@ export default function CitizenAssistant() {
         setMessages(prev => prev.map(m => m.id === assistantId
           ? { ...m, content: message, phase: "done", isError: true }
           : m));
+        // Keep the user's turn in history even on failure (finalizeHistory
+        // skips the empty assistant turn), so the next question retains
+        // conversational context instead of the failed one vanishing.
+        finalizeHistory(userText, "");
         setIsGenerating(false);
         abortControllerRef.current = null;
       },
@@ -475,13 +509,28 @@ export default function CitizenAssistant() {
               <div className="brand-subtitle">{displaySubtitle}</div>
             </div>
           </div>
-          <button className="settings-btn" onClick={() => setShowSettings(s => !s)} title={t.settingsTitle}>
-            <Settings size={18} />
-          </button>
+          <div className="header-actions">
+            {hasStarted && (
+              <button type="button" className="settings-btn" onClick={resetConversation} title={t.newConversation} aria-label={t.newConversation}>
+                <RotateCcw size={17} />
+              </button>
+            )}
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => setShowSettings(s => !s)}
+              title={t.settingsTitle}
+              aria-label={t.settingsTitle}
+              aria-expanded={showSettings}
+              aria-controls="settings-panel"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
         </div>
 
         {showSettings && (
-          <div className="settings-panel">
+          <div className="settings-panel" id="settings-panel">
             <div className="settings-title">{t.settingsTitle}</div>
 
             <label className="settings-field">
@@ -512,12 +561,14 @@ export default function CitizenAssistant() {
               <span>{t.displayMode}</span>
               <div className="mode-toggle">
                 <button
+                  type="button"
                   className={`mode-toggle-btn ${!detailedMode ? "active" : ""}`}
                   onClick={() => setDetailedMode(false)}
                 >
                   {t.citizenMode}
                 </button>
                 <button
+                  type="button"
                   className={`mode-toggle-btn ${detailedMode ? "active" : ""}`}
                   onClick={() => setDetailedMode(true)}
                 >
@@ -526,7 +577,7 @@ export default function CitizenAssistant() {
               </div>
             </div>
 
-            <button className="settings-close" onClick={() => setShowSettings(false)}>{t.close}</button>
+            <button type="button" className="settings-close" onClick={() => setShowSettings(false)}>{t.close}</button>
           </div>
         )}
       </header>
@@ -540,7 +591,7 @@ export default function CitizenAssistant() {
               <p className="welcome-message">{t.welcomeMessage}</p>
               <div className="suggested-grid">
                 {t.suggested.map((q, idx) => (
-                  <button key={idx} className="suggested-chip" onClick={() => sendMessage(q)}>
+                  <button type="button" key={idx} className="suggested-chip" onClick={() => sendMessage(q)}>
                     {q}
                   </button>
                 ))}
@@ -557,7 +608,7 @@ export default function CitizenAssistant() {
                       <div className="assistant-col" style={{ alignItems: "flex-end" }}>
                         <MessageAttachments attachments={m.attachments} />
                         {m.audio && <AudioPlayer url={m.audio.url} fallbackDuration={m.audio.duration} />}
-                        {m.content && <div className="msg-bubble msg-bubble-user">{m.content}</div>}
+                        {m.content && <div className="msg-bubble msg-bubble-user" dir="auto">{m.content}</div>}
                       </div>
                     </div>
                   );
@@ -578,7 +629,7 @@ export default function CitizenAssistant() {
                         />
                       )}
                       {m.phase !== "tools" && (
-                        <div className={`msg-bubble msg-bubble-assistant${m.isError ? " msg-bubble-error" : ""}`}>
+                        <div className={`msg-bubble msg-bubble-assistant${m.isError ? " msg-bubble-error" : ""}`} dir="auto">
                           {parseMarkdown(m.content, m.citations)}
                           {m.phase === "streaming" && <span className="caret" />}
                           {m.phase === "done" && m.expandable && (
@@ -625,7 +676,7 @@ export default function CitizenAssistant() {
                 <button className="icon-btn icon-btn-ghost" title={t.cancel} onClick={cancelRecording}>
                   <X size={17} />
                 </button>
-                <button className="icon-btn icon-btn-primary" title={t.sendRecording} onClick={sendRecording}>
+                <button type="button" className="icon-btn icon-btn-primary" title={t.sendRecording} onClick={sendRecording}>
                   <Check size={17} />
                 </button>
               </div>
@@ -657,18 +708,19 @@ export default function CitizenAssistant() {
                   onKeyDown={onTextareaKeyDown}
                 />
                 <div className="composer-actions">
-                  <button className="icon-btn" title={t.attach} onClick={openFilePicker} disabled={isGenerating}>
+                  <button type="button" className="icon-btn" title={t.attach} onClick={openFilePicker} disabled={isGenerating}>
                     <Paperclip size={18} />
                   </button>
-                  <button className="icon-btn" title={t.recordTooltip} onClick={startRecording} disabled={isGenerating}>
+                  <button type="button" className="icon-btn" title={t.recordTooltip} onClick={startRecording} disabled={isGenerating}>
                     <Mic size={18} />
                   </button>
                   {isGenerating ? (
-                    <button className="send-btn send-btn-stop" title={t.stop} onClick={stopGeneration}>
+                    <button type="button" className="send-btn send-btn-stop" title={t.stop} onClick={stopGeneration}>
                       <Square size={15} fill="currentColor" />
                     </button>
                   ) : (
                     <button
+                      type="button"
                       className="send-btn"
                       title={t.send}
                       onClick={() => sendMessage(input)}

@@ -51,19 +51,26 @@ function normalizeMessage(message) {
 	return { role, content };
 }
 
-export function getSessionId() {
+/**
+ * Starts a brand-new conversation: a fresh session_id, and the stored
+ * history wiped. Per the UI spec, the assistant must not retain a history
+ * of past conversations — this is called both on every app mount (so a
+ * page refresh behaves the same way) and from the "New conversation"
+ * button in CitizenAssistant.jsx.
+ */
+export function resetSession() {
+	const created = createSessionId();
 	const storage = getStorage();
-	if (!storage) return createSessionId();
-
-	try {
-		const existing = storage.getItem(SESSION_STORAGE_KEY);
-		if (existing) return existing;
-		const created = createSessionId();
-		storage.setItem(SESSION_STORAGE_KEY, created);
-		return created;
-	} catch {
-		return createSessionId();
+	if (storage) {
+		try {
+			storage.setItem(SESSION_STORAGE_KEY, created);
+			storage.removeItem(HISTORY_STORAGE_KEY);
+		} catch {
+			// Storage can fail in privacy mode or when quota is exceeded —
+			// the in-memory id returned below still works for this page load.
+		}
 	}
+	return created;
 }
 
 export function getHistory() {

@@ -9,7 +9,7 @@ export default function Expandable({ title, body, seeMore, seeLess }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="expandable">
-      <button className="expandable-toggle" onClick={() => setOpen(o => !o)}>
+      <button type="button" className="expandable-toggle" onClick={() => setOpen(o => !o)}>
         {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
         <span>{open ? seeLess : seeMore}</span>
       </button>

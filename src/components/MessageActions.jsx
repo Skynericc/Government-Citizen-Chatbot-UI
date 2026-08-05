@@ -86,17 +86,18 @@ export default function MessageActions({ t, text, language, feedback, onFeedback
   return (
     <div className="msg-actions-wrap">
       <div className="msg-actions">
-        <button className="icon-btn" title={listenTitle} onClick={handleListen} disabled={ttsState === "loading"}>
+        <button type="button" className="icon-btn" title={listenTitle} onClick={handleListen} disabled={ttsState === "loading"}>
           {ttsState === "loading" ? (
             <Loader2 size={15} className="spin" />
           ) : (
             <Volume2 size={15} color={listenActive ? "var(--primary)" : undefined} />
           )}
         </button>
-        <button className="icon-btn" title={copied ? t.copied : t.copy} onClick={handleCopy}>
+        <button type="button" className="icon-btn" title={copied ? t.copied : t.copy} onClick={handleCopy}>
           {copied ? <Check size={15} /> : <Copy size={15} />}
         </button>
         <button
+          type="button"
           className="icon-btn"
           title={t.helpful}
           onClick={() => onFeedback(feedback === "up" ? null : "up")}
@@ -104,16 +105,17 @@ export default function MessageActions({ t, text, language, feedback, onFeedback
           <ThumbsUp size={15} fill={feedback === "up" ? "var(--primary)" : "none"} color={feedback === "up" ? "var(--primary)" : undefined} />
         </button>
         <button
+          type="button"
           className="icon-btn"
           title={t.notHelpful}
           onClick={() => onFeedback(feedback === "down" ? null : "down")}
         >
           <ThumbsDown size={15} fill={feedback === "down" ? "var(--danger)" : "none"} color={feedback === "down" ? "var(--danger)" : undefined} />
         </button>
-        <button className="icon-btn" title={t.report}>
+        <button type="button" className="icon-btn" title={t.report}>
           <Flag size={15} />
         </button>
-        <button className="icon-btn" title={t.share}>
+        <button type="button" className="icon-btn" title={t.share}>
           <Share2 size={15} />
         </button>
       </div>
