@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send, Mic, Square, X, Check, Copy, Volume2, ThumbsUp, ThumbsDown,
   Flag, Share2, Settings, ChevronDown, ChevronUp, Loader2,
-  CheckCircle2, Landmark, Paperclip, RotateCcw
+  CheckCircle2, Landmark, Paperclip, RotateCcw,
+  CreditCard, BookUser, Baby, Home, Car
 } from "lucide-react";
 import CSS from "./utils/styles.css?inline"
 import { STRINGS } from "./constants/Strings"
@@ -35,17 +36,23 @@ import ministryLogo from "./assets/ministry-logo.svg";
 const MAX_FILES = 5;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
+// Index-aligned with TOPIC_ORDER (constants/Answers.js) and therefore with
+// each language's t.suggested array — purely a visual pairing for the
+// welcome screen's category cards.
+const SUGGESTED_ICONS = [CreditCard, BookUser, Baby, Home, Car];
+
 /* ------------------------------------------------------------------ */
 /* Main component                                                      */
 /* ------------------------------------------------------------------ */
 
 export default function CitizenAssistant() {
   const [language, setLanguage] = useState("fr");
-  const [primaryColor, setPrimaryColor] = useState("#1175BA");
+  const [primaryColor, setPrimaryColor] = useState("#00583A");
   const [institutionName, setInstitutionName] = useState("Royaume du Maroc — Ministère de la Transition Numérique et de la Réforme de l'Administration");
   const [customSubtitle, setCustomSubtitle] = useState("");
   const [detailedMode, setDetailedMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -74,6 +81,29 @@ export default function CitizenAssistant() {
 
   const t = STRINGS[language];
 
+  // Whether the welcome screen's content actually fits without scrolling.
+  // Measured live (not assumed) so small/short screens — where the 5
+  // suggestion cards genuinely don't all fit — keep normal scroll access,
+  // while the common case (content comfortably fits) hides the scrollbar
+  // entirely instead of showing a near-empty, purely cosmetic track.
+  const [welcomeFits, setWelcomeFits] = useState(true);
+
+  useEffect(() => {
+    if (messages.length > 0) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const check = () => setWelcomeFits(el.scrollHeight <= el.clientHeight + 1);
+    check();
+    // Re-check shortly after mount too: the ministry logo images can still
+    // be loading on the first check, which would under-measure the height.
+    const lateCheck = setTimeout(check, 200);
+    window.addEventListener("resize", check);
+    return () => {
+      clearTimeout(lateCheck);
+      window.removeEventListener("resize", check);
+    };
+  }, [language, institutionName, customSubtitle]);
+
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
@@ -90,6 +120,13 @@ export default function CitizenAssistant() {
       genTimeoutsRef.current.forEach(clearTimeout);
     };
   }, []);
+
+  useEffect(() => {
+    if (!showResetConfirm) return;
+    const onKey = (e) => { if (e.key === "Escape") setShowResetConfirm(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showResetConfirm]);
 
   const clearGenTimeouts = () => {
     genTimeoutsRef.current.forEach(clearTimeout);
@@ -498,11 +535,11 @@ export default function CitizenAssistant() {
       <style>{CSS}</style>
 
       <header className="app-header">
-        <div className="header-accent-primary" />
-        <div className="header-accent-gold" />
         <div className="app-header-inner">
           <div className="brand">
-            <img src={ministryLogo} alt={institutionName} className="brand-logo-img" />
+            <span className="brand-logo-badge">
+              <img src={ministryLogo} alt={institutionName} className="brand-logo-img" />
+            </span>
             <div className="brand-divider" />
             <div className="brand-text">
               <div className="brand-name">{institutionName}</div>
@@ -511,23 +548,31 @@ export default function CitizenAssistant() {
           </div>
           <div className="header-actions">
             {hasStarted && (
-              <button type="button" className="settings-btn" onClick={resetConversation} title={t.newConversation} aria-label={t.newConversation}>
+              <button
+                type="button"
+                className="settings-btn icon-tooltip"
+                onClick={() => setShowResetConfirm(true)}
+                aria-label={t.newConversation}
+                data-tooltip={t.newConversation}
+              >
                 <RotateCcw size={17} />
               </button>
             )}
             <button
               type="button"
-              className="settings-btn"
+              className="settings-btn icon-tooltip"
               onClick={() => setShowSettings(s => !s)}
-              title={t.settingsTitle}
               aria-label={t.settingsTitle}
               aria-expanded={showSettings}
               aria-controls="settings-panel"
+              data-tooltip={t.settingsTitle}
             >
               <Settings size={18} />
             </button>
           </div>
         </div>
+
+        <div className="header-accent-gold" />
 
         {showSettings && (
           <div className="settings-panel" id="settings-panel">
@@ -582,19 +627,23 @@ export default function CitizenAssistant() {
         )}
       </header>
 
-      <main className="app-main" ref={scrollRef}>
-        <div className="app-main-inner">
+      <main className={`app-main${!hasStarted && welcomeFits ? " app-main-welcome" : ""}`} ref={scrollRef}>
+        <div className={`app-main-inner${!hasStarted ? " app-main-inner-welcome" : ""}`}>
           {!hasStarted && (
             <div className="welcome">
               <img src={ministryLogo} alt="" className="welcome-logo-img" />
               <h1 className="welcome-title">{t.welcomeTitle}</h1>
               <p className="welcome-message">{t.welcomeMessage}</p>
               <div className="suggested-grid">
-                {t.suggested.map((q, idx) => (
-                  <button type="button" key={idx} className="suggested-chip" onClick={() => sendMessage(q)}>
-                    {q}
-                  </button>
-                ))}
+                {t.suggested.map((q, idx) => {
+                  const Icon = SUGGESTED_ICONS[idx] || CreditCard;
+                  return (
+                    <button type="button" key={idx} className="suggested-chip" onClick={() => sendMessage(q)}>
+                      <span className="suggested-chip-icon"><Icon size={20} /></span>
+                      <span className="suggested-chip-label">{q}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -736,6 +785,45 @@ export default function CitizenAssistant() {
           <div className="disclaimer">{t.disclaimer}</div>
         </div>
       </footer>
+
+      {showResetConfirm && (
+        <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reset-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setShowResetConfirm(false)}
+              aria-label={t.close}
+            >
+              <X size={16} />
+            </button>
+            <h2 className="modal-title" id="reset-confirm-title">{t.confirmResetTitle}</h2>
+            <p className="modal-body">{t.confirmResetBody}</p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="modal-btn modal-btn-primary"
+                onClick={() => { setShowResetConfirm(false); resetConversation(); }}
+              >
+                {t.confirmResetConfirm}
+              </button>
+              <button
+                type="button"
+                className="modal-btn modal-btn-secondary"
+                onClick={() => setShowResetConfirm(false)}
+              >
+                {t.confirmResetCancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
