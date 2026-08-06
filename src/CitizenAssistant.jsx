@@ -3,7 +3,7 @@ import {
   Send, Mic, Square, X, Check, Copy, Volume2, ThumbsUp, ThumbsDown,
   Flag, Share2, Settings, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, Landmark, Paperclip, RotateCcw,
-  CreditCard, BookUser, Baby, Home, Car
+  CreditCard, BookUser, Baby, Home, Car, Sun, Moon, Monitor
 } from "lucide-react";
 import CSS from "./utils/styles.css?inline"
 import { STRINGS } from "./constants/Strings"
@@ -47,6 +47,36 @@ const SUGGESTED_ICONS = [CreditCard, BookUser, Baby, Home, Car];
 
 export default function CitizenAssistant() {
   const [language, setLanguage] = useState("fr");
+  const [themePref, setThemePref] = useState(() => {
+    try { return localStorage.getItem("theme-pref") || "system"; } catch { return "system"; }
+  });
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      : false
+  );
+  const resolvedTheme = themePref === "system" ? (systemPrefersDark ? "dark" : "light") : themePref;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (e) => setSystemPrefersDark(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", onChange) : mq.addListener(onChange);
+    return () => {
+      mq.removeEventListener ? mq.removeEventListener("change", onChange) : mq.removeListener(onChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("theme-pref", themePref); } catch { /* ignore */ }
+  }, [themePref]);
+
+  const cycleTheme = () => {
+    setThemePref(prev => (prev === "light" ? "dark" : prev === "dark" ? "system" : "light"));
+  };
+  const THEME_ICONS = { light: Sun, dark: Moon, system: Monitor };
+  const ThemeIcon = THEME_ICONS[themePref];
+
   const [primaryColor, setPrimaryColor] = useState("#00583A");
   const [institutionName, setInstitutionName] = useState("Royaume du Maroc — Ministère de la Transition Numérique et de la Réforme de l'Administration");
   const [customSubtitle, setCustomSubtitle] = useState("");
@@ -530,6 +560,7 @@ export default function CitizenAssistant() {
     <div
       className="app-root"
       dir={t.dir}
+      data-theme={resolvedTheme}
       style={{ "--primary": primaryColor }}
     >
       <style>{CSS}</style>
@@ -547,6 +578,15 @@ export default function CitizenAssistant() {
             </div>
           </div>
           <div className="header-actions">
+            <button
+              type="button"
+              className="settings-btn icon-tooltip"
+              onClick={cycleTheme}
+              aria-label={`${t.themeLabel}: ${t[`theme${themePref[0].toUpperCase()}${themePref.slice(1)}`]}`}
+              data-tooltip={t[`theme${themePref[0].toUpperCase()}${themePref.slice(1)}`]}
+            >
+              <ThemeIcon size={17} />
+            </button>
             {hasStarted && (
               <button
                 type="button"
