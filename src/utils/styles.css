@@ -98,10 +98,10 @@ button, input, select, textarea {
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .brand-logo-badge {
   display: flex; align-items: center; justify-content: center;
-  background: #fff;
+  background: color-mix(in srgb, var(--primary) 88%, black 12%);
   border-radius: 10px;
   padding: 6px 10px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16), 0 1px 2px rgba(0,0,0,0.15);
   flex-shrink: 0;
 }
 .brand-logo-img {
@@ -258,11 +258,6 @@ button, input, select, textarea {
   padding: 8px 20px 22px;
   max-width: 960px;
   margin: 0 auto;
-}
-.welcome-logo-img {
-  height: 56px;
-  width: auto;
-  margin: 0 auto 16px;
 }
 .welcome-title {
   font-size: 27px;

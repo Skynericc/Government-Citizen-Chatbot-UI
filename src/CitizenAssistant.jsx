@@ -72,9 +72,9 @@ export default function CitizenAssistant() {
   }, [themePref]);
 
   const cycleTheme = () => {
-    setThemePref(prev => (prev === "light" ? "dark" : prev === "dark" ? "system" : "light"));
+    setThemePref(prev => (prev === "light" ? "dark" : "light"));
   };
-  const THEME_ICONS = { light: Sun, dark: Moon, system: Monitor };
+  const THEME_ICONS = { light: Sun, dark: Moon};
   const ThemeIcon = THEME_ICONS[themePref];
 
   const [primaryColor, setPrimaryColor] = useState("#00583A");
@@ -671,7 +671,6 @@ export default function CitizenAssistant() {
         <div className={`app-main-inner${!hasStarted ? " app-main-inner-welcome" : ""}`}>
           {!hasStarted && (
             <div className="welcome">
-              <img src={ministryLogo} alt="" className="welcome-logo-img" />
               <h1 className="welcome-title">{t.welcomeTitle}</h1>
               <p className="welcome-message">{t.welcomeMessage}</p>
               <div className="suggested-grid">
