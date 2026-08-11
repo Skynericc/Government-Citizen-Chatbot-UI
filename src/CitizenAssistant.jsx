@@ -31,6 +31,7 @@ import {
 // import { uploadFile } from "./utils/Uploadservice.jsx";
 import { renderInline, parseMarkdown } from "./utils/Markdown.jsx";
 import { SourcesList } from "./components/Citations.jsx";
+import { getHeaderTextStyle } from "./utils/color.js";
 import ministryLogo from "./assets/ministry-logo.svg";
 
 const MAX_FILES = 5;
@@ -77,8 +78,11 @@ export default function CitizenAssistant() {
   const THEME_ICONS = { light: Sun, dark: Moon};
   const ThemeIcon = THEME_ICONS[themePref];
 
-  const [primaryColor, setPrimaryColor] = useState("#00583A");
+  const [primaryColor, setPrimaryColor] = useState("#0D5F96");
   const [institutionName, setInstitutionName] = useState("Royaume du Maroc — Ministère de la Transition Numérique et de la Réforme de l'Administration");
+  const [assistantIcon, setAssistantIcon] = useState("");
+  const [assistantIconError, setAssistantIconError] = useState(false);
+  const headerText = getHeaderTextStyle(primaryColor);
   const [customSubtitle, setCustomSubtitle] = useState("");
   const [detailedMode, setDetailedMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -561,7 +565,14 @@ export default function CitizenAssistant() {
       className="app-root"
       dir={t.dir}
       data-theme={resolvedTheme}
-      style={{ "--primary": primaryColor }}
+      style={{
+        "--primary": primaryColor,
+        "--header-text": headerText.text,
+        "--header-text-soft": headerText.textSoft,
+        "--header-border": headerText.border,
+        "--header-hover-bg": headerText.hoverBg,
+        "--header-idle-bg": headerText.idleBg,
+      }}
     >
       <style>{CSS}</style>
 
@@ -632,6 +643,18 @@ export default function CitizenAssistant() {
               <span>{t.colorLabel}</span>
               <input type="color" value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} />
             </label>
+            {headerText.lowContrast && (
+              <div className="settings-warning">{t.contrastWarning}</div>
+            )}
+
+            <label className="settings-field">
+              <span>{t.assistantIconLabel}</span>
+              <input
+                value={assistantIcon}
+                placeholder={t.assistantIconPlaceholder}
+                onChange={e => { setAssistantIcon(e.target.value); setAssistantIconError(false); }}
+              />
+            </label>
 
             <label className="settings-field settings-field-row">
               <span>{t.languageLabel}</span>
@@ -693,7 +716,7 @@ export default function CitizenAssistant() {
                 if (m.role === "user") {
                   return (
                     <div className="msg-row msg-row-user" key={m.id}>
-                      <div className="assistant-col" style={{ alignItems: "flex-end" }}>
+                      <div className="assistant-col assistant-col-user" style={{ alignItems: "flex-end" }}>
                         <MessageAttachments attachments={m.attachments} />
                         {m.audio && <AudioPlayer url={m.audio.url} fallbackDuration={m.audio.duration} />}
                         {m.content && <div className="msg-bubble msg-bubble-user" dir="auto">{m.content}</div>}
@@ -705,7 +728,16 @@ export default function CitizenAssistant() {
                 return (
                   <div className="msg-row msg-row-assistant" key={m.id}>
                     <div className="assistant-avatar">
-                      <Landmark size={14} />
+                      {assistantIcon && !assistantIconError ? (
+                        <img
+                          src={assistantIcon}
+                          alt=""
+                          className="assistant-avatar-img"
+                          onError={() => setAssistantIconError(true)}
+                        />
+                      ) : (
+                        <Landmark size={14} />
+                      )}
                     </div>
                     <div className="assistant-col">
                       {showTools && (

@@ -87,12 +87,11 @@ button, input, select, textarea {
 .header-accent-gold { height: 3px; background: linear-gradient(90deg, var(--gold), color-mix(in srgb, var(--gold) 40%, white), var(--gold)); }
 
 .app-header-inner {
-  max-width: 1120px;
-  margin: 0 auto;
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 12px 24px;
   gap: 18px;
 }
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
@@ -112,7 +111,7 @@ button, input, select, textarea {
 .brand-divider {
   width: 1px;
   height: 30px;
-  background: rgba(255,255,255,0.28);
+  background: var(--header-border, rgba(255,255,255,0.28));
   flex-shrink: 0;
 }
 .brand-text { min-width: 0; }
@@ -123,11 +122,11 @@ button, input, select, textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #fff;
+  color: var(--header-text, #fff);
 }
 .brand-subtitle {
   font-size: 12px;
-  color: rgba(255,255,255,0.78);
+  color: var(--header-text-soft, rgba(255,255,255,0.78));
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
@@ -136,20 +135,39 @@ button, input, select, textarea {
 
 .header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .settings-btn {
-  border: 1px solid rgba(255,255,255,0.3);
-  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--header-border, rgba(255,255,255,0.3));
+  background: var(--header-idle-bg, rgba(255,255,255,0.08));
   border-radius: 10px;
   width: 36px; height: 36px;
   display: flex; align-items: center; justify-content: center;
-  color: rgba(255,255,255,0.92);
+  color: var(--header-text, rgba(255,255,255,0.92));
   cursor: pointer;
   flex-shrink: 0;
   transition: background .14s ease, border-color .14s ease, transform .14s ease;
 }
 .settings-btn:hover {
-  background: rgba(255,255,255,0.18);
-  border-color: rgba(255,255,255,0.5);
+  background: var(--header-hover-bg, rgba(255,255,255,0.18));
+  border-color: var(--header-text, rgba(255,255,255,0.5));
   transform: translateY(-1px);
+}
+.header-actions .icon-tooltip:last-child::after {
+  left: auto;
+  right: 0;
+  transform: translateY(-4px);
+}
+.header-actions .icon-tooltip:last-child:hover::after,
+.header-actions .icon-tooltip:last-child:focus-visible::after {
+  transform: translateY(0);
+}
+
+.header-actions .icon-tooltip:first-child::after {
+  left: -8px;
+  right: auto;
+  transform: translateY(-4px);
+}
+.header-actions .icon-tooltip:first-child:hover::after,
+.header-actions .icon-tooltip:first-child:focus-visible::after {
+  transform: translateY(0);
 }
 
 .icon-tooltip { position: relative; }
@@ -204,6 +222,15 @@ button, input, select, textarea {
   background: var(--surface-soft);
 }
 .settings-field-row { flex-direction: row; align-items: center; justify-content: space-between; }
+.settings-warning {
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--tint-base));
+  border: 1px solid color-mix(in srgb, var(--danger) 25%, var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: -4px;
+}
 .settings-field-row input[type="color"] { width: 46px; height: 30px; padding: 2px; border-radius: 7px; }
 .mode-toggle { display: flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface-soft); }
 .mode-toggle-btn { border: none; background: transparent; padding: 8px 12px; font-size: 12px; cursor: pointer; color: var(--muted); }
@@ -328,29 +355,33 @@ button, input, select, textarea {
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; margin-top: 2px;
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
+.assistant-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .assistant-col { max-width: 82%; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.assistant-col-user { max-width: 92%; }
 
 .msg-bubble { font-size: 14.75px; line-height: 1.72; overflow-wrap: break-word; word-break: break-word; }
 .msg-bubble-user {
   background: color-mix(in srgb, var(--primary) 8%, var(--tint-base));
   border-radius: 16px 16px 4px 16px;
   padding: 12px 15px;
-  max-width: 74%;
+  max-width: 100%;
+  width: fit-content;
   border: 1px solid color-mix(in srgb, var(--primary) 16%, var(--border));
 }
 .msg-bubble-assistant {
-  padding: 15px 16px 14px;
-  border: 1px solid var(--border);
-  border-top: 3px solid var(--gold);
-  border-radius: 4px 12px 12px 12px;
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-sm);
+  padding: 2px 0 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 .msg-bubble-error {
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
-  border-top-color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 5%, var(--tint-base));
+  padding: 12px 14px;
+  border-radius: 10px;
+  border-inline-start: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 6%, var(--tint-base));
   color: var(--danger);
 }
 
