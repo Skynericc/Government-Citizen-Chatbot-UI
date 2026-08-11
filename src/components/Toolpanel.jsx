@@ -59,7 +59,7 @@ export default function ToolPanel({ tools = [], citizenLabel, detailed, t }) {
                 ) : (
                   <Loader2 size={14} className="spin tool-icon-running" />
                 )}
-                <span className="tool-name">{tool.name}</span>
+                <span className="tool-name">{tool.display || tool.name}</span>
                 <span className={`tool-status tool-status-${tool.status}`}>
                   {t.status[tool.status] || t.status.running}
                 </span>
@@ -69,6 +69,9 @@ export default function ToolPanel({ tools = [], citizenLabel, detailed, t }) {
               </div>
               {tool.status === "done" && tool.output && (
                 <div className="tool-row-summary">{truncate(String(tool.output), 220)}</div>
+              )}
+              {tool.args && (
+                <div className="tool-row-args">{truncate(String(tool.args), 300)}</div>
               )}
             </div>
           ))}

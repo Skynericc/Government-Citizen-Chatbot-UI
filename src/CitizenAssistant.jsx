@@ -292,18 +292,20 @@ export default function CitizenAssistant() {
           : m));
       },
 
-      onToolStart: ({ callId, name }) => {
+      onToolStart: ({ callId, name, display, args }) => {
         setMessages(prev => prev.map(m => m.id === assistantId
-          ? { ...m, tools: [...m.tools, { callId, name, status: "running", startedAt: Date.now() }] }
+          ? { ...m, tools: [...m.tools, { callId, name, display, args, status: "running", startedAt: Date.now() }] }
           : m));
       },
 
-      onToolEnd: ({ callId, output }) => {
+      onToolEnd: ({ callId, output, name }) => {
         setMessages(prev => prev.map(m => m.id === assistantId
           ? {
               ...m,
               tools: m.tools.map(tool => tool.callId === callId
-                ? { ...tool, status: "done", output, endedAt: Date.now() }
+                ? { ...tool, // preserve name/display/args from the start event, but accept name if provided
+                    name: tool.name || name || tool.name,
+                    status: "done", output, endedAt: Date.now() }
                 : tool),
             }
           : m));
