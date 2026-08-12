@@ -4,18 +4,40 @@
 /* VITE_AGENT_URL is set, CitizenAssistant.jsx uses this instead of     */
 /* the local demo simulation.                                           */
 /*                                                                        */
-/* Scope note: only plain typed text is sent as user_text here. Voice    */
-/* recordings (no ASR wired yet) and file attachments (no upload         */
-/* endpoint in this contract — see §5 "hors périmètre") are NOT part     */
-/* of this call. The caller (CitizenAssistant.jsx) only invokes          */
-/* streamChat for text-bearing messages and keeps using the local        */
-/* demo path for voice-only turns until the ASR step lands.              */
+/* Scope note: typed text and ASR-produced transcripts are sent as        */
+/* user_text. File attachments are not part of the agent contract and     */
+/* are therefore not sent by this client.                                 */
 /* ------------------------------------------------------------------ */
 
 export const AGENT_URL = import.meta.env.VITE_AGENT_URL || "";
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true"
+  || (import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE !== "false");
 
 export function isAgentConfigured() {
   return Boolean(AGENT_URL);
+}
+
+export function isDemoModeEnabled() {
+  return DEMO_MODE;
+}
+
+async function readHttpErrorMessage(response) {
+  let raw = "";
+  try {
+    raw = await response.text();
+  } catch {
+    return "";
+  }
+  if (!raw) return "";
+
+  try {
+    const payload = JSON.parse(raw);
+    const message = payload?.detail || payload?.message || payload?.error_message;
+    return typeof message === "string" ? message.slice(0, 500) : "";
+  } catch {
+    const contentType = response.headers.get("content-type") || "";
+    return contentType.startsWith("text/plain") ? raw.trim().slice(0, 500) : "";
+  }
 }
 
 /**
@@ -27,14 +49,14 @@ export function isAgentConfigured() {
  * @param {{role: "user"|"assistant", content: string}[]} opts.history
  * @param {boolean} opts.isFirstQuestion
  * @param {"text"|"voice"} [opts.inputMode]
- * @param {string} [opts.ipHash] - the frontend cannot see the real client
- *   IP from the browser; "unknown" (the contract's own default) is sent
- *   unless a backend/edge layer is later added to compute it (see §1.2).
+ * @param {string} [opts.ipHash] - legacy Chainlit-contract field. The new
+ *   deployment sends "unknown" because the trusted proxy and agent derive
+ *   the real hash server-side; browsers must not choose their rate-limit key.
  * @param {AbortSignal} [opts.signal]
  * @param {(delta: string) => void} [opts.onToken]
  * @param {(evt: {callId: string, name: string, display?: string, args?: string}) => void} [opts.onToolStart]
  * @param {(evt: {callId: string, name?: string, output?: string}) => void} [opts.onToolEnd]
- * @param {(evt: {text: string, cacheHit: boolean}) => void} [opts.onDone]
+ * @param {(evt: {text: string, cacheHit: boolean, endedWithoutDone: boolean}) => void} [opts.onDone]
  * @param {(err: {kind: "network"|"http"|"rate_limit"|"stream", status?: number, message?: string, raw?: any}) => void} [opts.onError]
  */
 export async function streamChat({
@@ -72,15 +94,19 @@ export async function streamChat({
     return;
   }
 
-  // 429 is a plain HTTP error sent *before* the stream starts (§1.3) — not
-  // an SSE event. Its body is currently Arabic-only and not meant to be
-  // shown verbatim; the caller maps kind: "rate_limit" to its own string.
+  // 429 is a plain HTTP error sent *before* the stream starts (§1.3), not
+  // an SSE event. Preserve its bounded API message for the caller, which
+  // retains a localized fallback if the response has no usable detail.
   if (response.status === 429) {
-    onError?.({ kind: "rate_limit" });
+    onError?.({ kind: "rate_limit", status: 429, message: await readHttpErrorMessage(response) });
     return;
   }
   if (!response.ok) {
-    onError?.({ kind: "http", status: response.status });
+    onError?.({
+      kind: "http",
+      status: response.status,
+      message: await readHttpErrorMessage(response),
+    });
     return;
   }
   if (!response.body) {
@@ -91,16 +117,23 @@ export async function streamChat({
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let streamedText = "";
+  let terminalEventReceived = false;
   // Resolves tool_end events sent with call_id: "_last" (the agent's
   // documented fallback when it has no real id for the call) to whichever
   // call_id was most recently opened by a tool_start.
   let lastCallId = null;
 
   const handleEvent = (evt) => {
+    if (terminalEventReceived) return;
+
     switch (evt.type) {
-      case "token":
-        onToken?.(evt.delta ?? "");
+      case "token": {
+        const delta = typeof evt.delta === "string" ? evt.delta : "";
+        streamedText += delta;
+        onToken?.(delta);
         break;
+      }
       case "tool_start": {
         const callId = evt.call_id || `auto-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         lastCallId = callId;
@@ -112,16 +145,36 @@ export async function streamChat({
         if (callId) onToolEnd?.({ callId, name: evt.name, output: evt.output });
         break;
       }
-      case "done":
-        onDone?.({ text: evt.text, cacheHit: Boolean(evt.cache_hit) });
+      case "done": {
+        terminalEventReceived = true;
+        const finalText = typeof evt.text === "string" ? evt.text : streamedText;
+        onDone?.({ text: finalText, cacheHit: Boolean(evt.cache_hit), endedWithoutDone: false });
         break;
-      case "error":
-        onError?.({ kind: "stream", message: evt.message });
+      }
+      case "error": {
+        terminalEventReceived = true;
+        onError?.({
+          kind: "stream",
+          message: typeof evt.message === "string" ? evt.message.slice(0, 500) : "",
+        });
         break;
+      }
       default:
         // Unknown event type — ignore rather than break the stream, in case
         // the backend adds new event types later.
         break;
+    }
+  };
+
+  const processLine = (rawLine) => {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) return;
+    const jsonPart = line.slice(5).trim();
+    if (!jsonPart) return;
+    try {
+      handleEvent(JSON.parse(jsonPart));
+    } catch (err) {
+      console.error("Malformed SSE event from agent:", jsonPart, err);
     }
   };
 
@@ -138,21 +191,34 @@ export async function streamChat({
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? ""; // keep the last, possibly incomplete line
       for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line.startsWith("data:")) continue;
-        const jsonPart = line.slice(5).trim();
-        if (!jsonPart) continue;
-        try {
-          handleEvent(JSON.parse(jsonPart));
-        } catch (err) {
-          console.error("Malformed SSE event from agent:", jsonPart, err);
-        }
+        processLine(rawLine);
+      }
+      if (terminalEventReceived) {
+        await reader.cancel();
+        break;
       }
     }
-    // A flux that ends without an explicit `done` is treated as finished,
-    // per §1.3's own "remarques d'implémentation".
+
+    // Flush the decoder and parse a final event even when the server closes
+    // without a trailing newline.
+    buffer += decoder.decode();
+    if (buffer.trim()) processLine(buffer);
+
+    // The contract explicitly allows EOF without a `done` event. Finalize
+    // from the accumulated tokens so the UI cannot remain stuck generating.
+    if (!terminalEventReceived) {
+      terminalEventReceived = true;
+      if (streamedText) {
+        onDone?.({ text: streamedText, cacheHit: false, endedWithoutDone: true });
+      } else {
+        onError?.({ kind: "stream", message: "" });
+      }
+    }
   } catch (err) {
     if (err.name === "AbortError") return;
-    onError?.({ kind: "network", raw: err });
+    if (!terminalEventReceived) {
+      terminalEventReceived = true;
+      onError?.({ kind: "network", raw: err });
+    }
   }
 }

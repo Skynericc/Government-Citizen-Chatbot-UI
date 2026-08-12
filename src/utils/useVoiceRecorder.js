@@ -1,6 +1,8 @@
 import { useRef, useState, useCallback } from "react";
 import { convertAudioBlobToWavBlob } from "./wavEncoder.js";
 
+export const MAX_AUDIO_DURATION_SECONDS = 25;
+
 /* ------------------------------------------------------------------ */
 /* Real microphone recording via the MediaRecorder API.                */
 /* No backend: the recorded Blob is kept client-side as an object URL  */
@@ -68,6 +70,7 @@ export function useVoiceRecorder() {
         pendingActionRef.current = null;
 
         if (action === "cancel") {
+          chunksRef.current = [];
           resolveRef.current?.({ kind: "cancelled" });
           resolveRef.current = null;
           return;
@@ -95,8 +98,21 @@ export function useVoiceRecorder() {
       setIsRecording(true);
       setSeconds(0);
       timerRef.current = setInterval(() => {
-        durationRef.current += 1;
+        if (pendingActionRef.current) return;
+
+        const nextDuration = durationRef.current + 1;
+        durationRef.current = Math.min(nextDuration, MAX_AUDIO_DURATION_SECONDS);
         setSeconds(durationRef.current);
+
+        if (
+          durationRef.current >= MAX_AUDIO_DURATION_SECONDS &&
+          recorder.state === "recording"
+        ) {
+          setError("duration");
+          setIsRecording(false);
+          pendingActionRef.current = "cancel";
+          recorder.stop();
+        }
       }, 1000);
     } catch (err) {
       setError("permission");

@@ -14,7 +14,7 @@ import ToolPanel from "./components/Toolpanel.jsx";
 import { AttachmentBar, MessageAttachments } from "./components/Attachments.jsx";
 import AudioPlayer from "./components/AudioPlayer.jsx";
 import { useVoiceRecorder } from "./utils/useVoiceRecorder.js";
-import { streamChat, isAgentConfigured } from "./utils/AgentService.js";
+import { streamChat, isAgentConfigured, isDemoModeEnabled } from "./utils/AgentService.js";
 import { isASRConfigured, transcribeSpeech } from "./utils/ASRService.js";
 import {
   addAssistantMessage,
@@ -36,6 +36,9 @@ import ministryLogo from "./assets/ministry-logo.svg";
 
 const MAX_FILES = 5;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const VALID_THEME_PREFERENCES = new Set(["system", "light", "dark"]);
+const FILE_ATTACHMENTS_ENABLED = import.meta.env.VITE_FILE_ATTACHMENTS_ENABLED === "true";
+const TOOL_CALLS_ENABLED = import.meta.env.VITE_TOOL_CALLS_ENABLED !== "false";
 
 // Index-aligned with TOPIC_ORDER (constants/Answers.js) and therefore with
 // each language's t.suggested array — purely a visual pairing for the
@@ -49,7 +52,12 @@ const SUGGESTED_ICONS = [CreditCard, BookUser, Baby, Home, Car];
 export default function CitizenAssistant() {
   const [language, setLanguage] = useState("fr");
   const [themePref, setThemePref] = useState(() => {
-    try { return localStorage.getItem("theme-pref") || "system"; } catch { return "system"; }
+    try {
+      const storedTheme = localStorage.getItem("theme-pref");
+      return VALID_THEME_PREFERENCES.has(storedTheme) ? storedTheme : "system";
+    } catch {
+      return "system";
+    }
   });
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
     typeof window !== "undefined" && window.matchMedia
@@ -75,16 +83,16 @@ export default function CitizenAssistant() {
   const cycleTheme = () => {
     setThemePref(prev => (prev === "light" ? "dark" : "light"));
   };
-  const THEME_ICONS = { light: Sun, dark: Moon};
+  const THEME_ICONS = { system: Monitor, light: Sun, dark: Moon };
   const ThemeIcon = THEME_ICONS[themePref];
 
   const [primaryColor, setPrimaryColor] = useState("#0D5F96");
-  const [institutionName, setInstitutionName] = useState("Royaume du Maroc — Ministère de la Transition Numérique et de la Réforme de l'Administration");
-  const [assistantIcon, setAssistantIcon] = useState("");
+  const institutionName = "Royaume du Maroc — Ministère de la Transition Numérique et de la Réforme de l'Administration";
+  const assistantIcon = "";
   const [assistantIconError, setAssistantIconError] = useState(false);
   const headerText = getHeaderTextStyle(primaryColor);
-  const [customSubtitle, setCustomSubtitle] = useState("");
-  const [detailedMode, setDetailedMode] = useState(false);
+  const customSubtitle = "";
+  const [detailedMode, setDetailedMode] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
@@ -122,6 +130,9 @@ export default function CitizenAssistant() {
   // entirely instead of showing a near-empty, purely cosmetic track.
   const [welcomeFits, setWelcomeFits] = useState(true);
 
+  const stickToBottomRef = useRef(true);
+  const scrollFrameRef = useRef(null);
+
   useEffect(() => {
     if (messages.length > 0) return;
     const el = scrollRef.current;
@@ -138,9 +149,70 @@ export default function CitizenAssistant() {
     };
   }, [language, institutionName, customSubtitle]);
 
+  const syncStickToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const shouldStick = distanceFromBottom <= 80;
+    stickToBottomRef.current = shouldStick;
+  }, []);
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleWheel = (event) => {
+      if (event.deltaY < 0) {
+        stickToBottomRef.current = false;
+        return;
+      }
+
+      if (event.deltaY > 0) {
+        syncStickToBottom();
+      }
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: true });
+
+    return () => {
+      el.removeEventListener("wheel", handleWheel);
+    };
+  }, [syncStickToBottom]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const handleScroll = () => {
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+
+      if (distanceFromBottom > 80) {
+        stickToBottomRef.current = false;
+        return;
+      }
+
+      stickToBottomRef.current = true;
+    };
+
+    el.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      el.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !isGenerating || !stickToBottomRef.current) return;
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+    }
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+      scrollFrameRef.current = null;
+    });
+  }, [messages, isGenerating]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -265,8 +337,8 @@ export default function CitizenAssistant() {
   /* Real integration (contrat_api_frontend.pdf §1) — POST {agent}/chat,  */
   /* streamed as SSE via utils/AgentService.js. Used whenever              */
   /* VITE_AGENT_URL is configured; otherwise sendMessage falls back to     */
-  /* startDemoGeneration above so the local demo keeps working with no     */
-  /* backend at all.                                                        */
+  /* startDemoGeneration above only when explicit/local development demo   */
+  /* mode is enabled. Production never falls back to canned answers.       */
   /* ------------------------------------------------------------------ */
   const startRealGeneration = useCallback((assistantId, userText, inputMode = "text") => {
     setMessages(prev => prev.map(m => m.id === assistantId
@@ -325,7 +397,9 @@ export default function CitizenAssistant() {
 
       onError: (err) => {
         console.error("Agent error:", err);
-        const message = err.kind === "rate_limit" ? t.rateLimitedMessage : t.agentErrorGeneric;
+        const message = err.kind === "rate_limit"
+          ? (err.message || t.rateLimitedMessage)
+          : (err.kind === "stream" && err.message ? err.message : t.agentErrorGeneric);
         setMessages(prev => prev.map(m => m.id === assistantId
           ? { ...m, content: message, phase: "done", isError: true }
           : m));
@@ -439,6 +513,8 @@ export default function CitizenAssistant() {
     const userId = `u-${Date.now()}`;
     const assistantId = `a-${Date.now() + 1}`;
 
+    stickToBottomRef.current = true;
+
     setMessages(prev => [
       ...prev,
       { id: userId, role: "user", content: text, attachments, audio },
@@ -450,15 +526,19 @@ export default function CitizenAssistant() {
     setVoiceError("");
     setIsGenerating(true);
 
-    // The real backend only has a plain-text chat contract for now (no ASR
-    // or file-upload endpoints wired yet — see the integration roadmap), so
-    // voice-only turns keep using the local demo simulation regardless of
-    // VITE_AGENT_URL, and attachments are shown in the bubble but not sent.
     if (isAgentConfigured() && text) {
       startRealGeneration(assistantId, text, inputMode);
-    } else {
+    } else if (isDemoModeEnabled()) {
       const topic = resolveTopic(text);
       startDemoGeneration(assistantId, topic, text);
+    } else {
+      // Production must never disguise a missing backend or unsupported
+      // attachment-only turn with a canned answer.
+      setMessages(prev => prev.map(message => message.id === assistantId
+        ? { ...message, content: t.agentErrorGeneric, phase: "done", isError: true }
+        : message));
+      finalizeHistory(text, "");
+      setIsGenerating(false);
     }
   };
 
@@ -526,7 +606,12 @@ export default function CitizenAssistant() {
     }
 
     if (!isASRConfigured()) {
-      sendMessage("", result, "voice");
+      if (isDemoModeEnabled()) {
+        sendMessage("", result, "voice");
+      } else {
+        URL.revokeObjectURL(result.url);
+        setVoiceError(t.asrUnavailable || "ASR service unavailable.");
+      }
       return;
     }
 
@@ -631,16 +716,6 @@ export default function CitizenAssistant() {
           <div className="settings-panel" id="settings-panel">
             <div className="settings-title">{t.settingsTitle}</div>
 
-            <label className="settings-field">
-              <span>{t.institutionLabel}</span>
-              <input value={institutionName} onChange={e => setInstitutionName(e.target.value)} />
-            </label>
-
-            <label className="settings-field">
-              <span>{t.subtitleLabel}</span>
-              <input value={customSubtitle} placeholder={t.subtitle} onChange={e => setCustomSubtitle(e.target.value)} />
-            </label>
-
             <label className="settings-field settings-field-row">
               <span>{t.colorLabel}</span>
               <input type="color" value={primaryColor} onChange={e => setPrimaryColor(e.target.value)} />
@@ -648,15 +723,6 @@ export default function CitizenAssistant() {
             {headerText.lowContrast && (
               <div className="settings-warning">{t.contrastWarning}</div>
             )}
-
-            <label className="settings-field">
-              <span>{t.assistantIconLabel}</span>
-              <input
-                value={assistantIcon}
-                placeholder={t.assistantIconPlaceholder}
-                onChange={e => { setAssistantIcon(e.target.value); setAssistantIconError(false); }}
-              />
-            </label>
 
             <label className="settings-field settings-field-row">
               <span>{t.languageLabel}</span>
@@ -667,25 +733,27 @@ export default function CitizenAssistant() {
               </select>
             </label>
 
-            <div className="settings-field settings-field-row">
-              <span>{t.displayMode}</span>
-              <div className="mode-toggle">
-                <button
-                  type="button"
-                  className={`mode-toggle-btn ${!detailedMode ? "active" : ""}`}
-                  onClick={() => setDetailedMode(false)}
-                >
-                  {t.citizenMode}
-                </button>
-                <button
-                  type="button"
-                  className={`mode-toggle-btn ${detailedMode ? "active" : ""}`}
-                  onClick={() => setDetailedMode(true)}
-                >
-                  {t.detailedMode}
-                </button>
+            {TOOL_CALLS_ENABLED && (
+              <div className="settings-field settings-field-row">
+                <span>{t.displayMode}</span>
+                <div className="mode-toggle">
+                  <button
+                    type="button"
+                    className={`mode-toggle-btn ${!detailedMode ? "active" : ""}`}
+                    onClick={() => setDetailedMode(false)}
+                  >
+                    {t.citizenMode}
+                  </button>
+                  <button
+                    type="button"
+                    className={`mode-toggle-btn ${detailedMode ? "active" : ""}`}
+                    onClick={() => setDetailedMode(true)}
+                  >
+                    {t.detailedMode}
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             <button type="button" className="settings-close" onClick={() => setShowSettings(false)}>{t.close}</button>
           </div>
@@ -726,7 +794,9 @@ export default function CitizenAssistant() {
                     </div>
                   );
                 }
-                const showTools = m.phase === "tools";
+                const showTools = TOOL_CALLS_ENABLED && (
+                  m.phase === "tools" || (m.tools?.length ?? 0) > 0
+                );
                 return (
                   <div className="msg-row msg-row-assistant" key={m.id}>
                     <div className="assistant-avatar">
@@ -747,6 +817,7 @@ export default function CitizenAssistant() {
                           tools={m.tools}
                           citizenLabel={m.citizenLabel}
                           detailed={detailedMode}
+                          active={m.phase === "tools" || m.tools?.some(tool => tool.status === "running")}
                           t={t}
                         />
                       )}
@@ -805,21 +876,26 @@ export default function CitizenAssistant() {
             </div>
           ) : (
             <div className="composer">
-              <AttachmentBar attachments={attachments} onRemove={removeAttachment} uploadingLabel={t.uploading} />
-              {attachError && <div className="attach-error">{attachError}</div>}
+              {FILE_ATTACHMENTS_ENABLED && (
+                <AttachmentBar attachments={attachments} onRemove={removeAttachment} uploadingLabel={t.uploading} />
+              )}
+              {FILE_ATTACHMENTS_ENABLED && attachError && <div className="attach-error">{attachError}</div>}
               {voiceError && <div className="attach-error">{voiceError}</div>}
               {recorder.error === "permission" && <div className="attach-error">{t.micPermissionError}</div>}
               {recorder.error === "unsupported" && <div className="attach-error">{t.micUnsupported}</div>}
+              {recorder.error === "duration" && <div className="attach-error">{t.recordingTooLong}</div>}
               {recorder.error === "encode" && <div className="attach-error">{t.voicePrepError || "Could not prepare the recording."}</div>}
               <div className="composer-row">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="file-input-hidden"
-                  accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                  onChange={handleFilesSelected}
-                />
+                {FILE_ATTACHMENTS_ENABLED && (
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="file-input-hidden"
+                    accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                    onChange={handleFilesSelected}
+                  />
+                )}
                 <textarea
                   ref={textareaRef}
                   className="composer-input"
@@ -830,9 +906,11 @@ export default function CitizenAssistant() {
                   onKeyDown={onTextareaKeyDown}
                 />
                 <div className="composer-actions">
-                  <button type="button" className="icon-btn" title={t.attach} onClick={openFilePicker} disabled={isGenerating}>
-                    <Paperclip size={18} />
-                  </button>
+                  {FILE_ATTACHMENTS_ENABLED && (
+                    <button type="button" className="icon-btn" title={t.attach} onClick={openFilePicker} disabled={isGenerating}>
+                      <Paperclip size={18} />
+                    </button>
+                  )}
                   <button type="button" className="icon-btn" title={t.recordTooltip} onClick={startRecording} disabled={isGenerating}>
                     <Mic size={18} />
                   </button>
@@ -846,7 +924,7 @@ export default function CitizenAssistant() {
                       className="send-btn"
                       title={t.send}
                       onClick={() => sendMessage(input)}
-                      disabled={!input.trim() && attachments.length === 0}
+                      disabled={!input.trim() && (!FILE_ATTACHMENTS_ENABLED || attachments.length === 0)}
                     >
                       <Send size={16} />
                     </button>

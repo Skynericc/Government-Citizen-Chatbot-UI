@@ -8,6 +8,8 @@
 
 const SESSION_STORAGE_KEY = "citizen-assistant-session-id";
 const HISTORY_STORAGE_KEY = "citizen-assistant-history";
+export const MAX_HISTORY_TURNS = 20;
+const MAX_HISTORY_MESSAGES = MAX_HISTORY_TURNS * 2;
 
 function createSessionId() {
 	return crypto.randomUUID();
@@ -51,6 +53,10 @@ function normalizeMessage(message) {
 	return { role, content };
 }
 
+function limitHistory(history) {
+	return history.slice(-MAX_HISTORY_MESSAGES);
+}
+
 /**
  * Starts a brand-new conversation: a fresh session_id, and the stored
  * history wiped. Per the UI spec, the assistant must not retain a history
@@ -76,23 +82,23 @@ export function resetSession() {
 export function getHistory() {
 	const history = readJson(HISTORY_STORAGE_KEY, []);
 	if (!Array.isArray(history)) return [];
-	return history
+	return limitHistory(history
 		.map(normalizeMessage)
-		.filter(Boolean);
+		.filter(Boolean));
 }
 
 function setHistory(history) {
-	writeJson(HISTORY_STORAGE_KEY, history);
+	writeJson(HISTORY_STORAGE_KEY, limitHistory(history));
 }
 
 export function addUserMessage(content) {
-	const next = [...getHistory(), { role: "user", content: content || "" }];
+	const next = limitHistory([...getHistory(), { role: "user", content: content || "" }]);
 	setHistory(next);
 	return next;
 }
 
 export function addAssistantMessage(content) {
-	const next = [...getHistory(), { role: "assistant", content: content || "" }];
+	const next = limitHistory([...getHistory(), { role: "assistant", content: content || "" }]);
 	setHistory(next);
 	return next;
 }
