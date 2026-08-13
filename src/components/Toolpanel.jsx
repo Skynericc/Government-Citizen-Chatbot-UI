@@ -1,9 +1,7 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  Braces,
+  AlertTriangle,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
   Clock3,
   Database,
   Layers3,
@@ -12,191 +10,147 @@ import {
   Sparkles,
 } from "lucide-react";
 
-const MAX_TECHNICAL_DETAIL_CHARS = 6000;
+/* ------------------------------------------------------------------ */
+/* This component only ever reads: callId, name (used solely as an     */
+/* icon/label LOOKUP KEY, never printed), display, status, startedAt,  */
+/* endedAt, and a pre-vetted plain-text `summary`. It never reads or   */
+/* renders tool.args or tool.output — those are intentionally not      */
+/* even present in message state (see CitizenAssistant.jsx).           */
+/* ------------------------------------------------------------------ */
 
-function elapsedSeconds(tool) {
+function roundedSeconds(tool) {
   if (!tool.startedAt) return null;
   const end = tool.endedAt || Date.now();
-  return ((end - tool.startedAt) / 1000).toFixed(1);
+  const seconds = Math.round((end - tool.startedAt) / 1000);
+  return seconds > 0 ? seconds : null;
 }
 
-function parseJson(value) {
-  if (value && typeof value === "object") return value;
-  if (typeof value !== "string" || !value.trim()) return null;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return null;
-  }
-}
-
-function technicalText(value) {
-  const parsed = parseJson(value);
-  let text;
-  if (parsed && typeof parsed.result === "string" && Object.keys(parsed).length === 1) {
-    text = parsed.result.trim();
-  } else if (parsed) {
-    text = JSON.stringify(parsed, null, 2);
-  } else {
-    text = String(value || "").trim();
-  }
-
-  return {
-    text: text.slice(0, MAX_TECHNICAL_DETAIL_CHARS),
-    truncated: text.length > MAX_TECHNICAL_DETAIL_CHARS,
-  };
-}
-
-function summarizeTool(tool, t) {
-  const args = parseJson(tool.args);
-  const output = parseJson(tool.output);
-  const outputText = typeof output?.result === "string"
-    ? output.result
-    : typeof tool.output === "string" ? tool.output : "";
-  const resultMarkers = outputText.match(/^=== .*?Result \d+ ===$/gm) || [];
-  const procedureTitles = [...outputText.matchAll(/^proc_title:\s*(.+)$/gm)]
-    .map((match) => match[1].trim())
-    .filter(Boolean);
-
-  const stats = [];
-  if (resultMarkers.length) stats.push({ value: resultMarkers.length, label: t.resultsLabel });
-  if (Array.isArray(args?.first_or)) stats.push({ value: args.first_or.length, label: t.keywordsLabel });
-  if (Array.isArray(args?.semantic_queries)) stats.push({ value: args.semantic_queries.length, label: t.queriesLabel });
-
-  return {
-    args,
-    stats,
-    firstProcedureTitle: procedureTitles[0] || "",
-    inputDetail: technicalText(tool.args),
-    outputDetail: technicalText(tool.output),
-  };
-}
-
+// Decorative icon only, chosen from the technical name — never displayed
+// as text. Unknown/unmapped tools get a neutral generic icon.
 function toolIcon(name) {
   if (name === "super_hybrid_search") return Search;
   if (name === "get_items_by_indices") return Database;
   if (name === "let_us_deepdive_chunkwise") return Layers3;
-  return Braces;
+  return Sparkles;
 }
 
-function ToolRow({ tool, t }) {
-  const [showDetails, setShowDetails] = useState(false);
-  const summary = useMemo(() => summarizeTool(tool, t), [tool, t]);
+function friendlyLabel(tool, t) {
+  return tool.display || t.toolNames?.[tool.name] || t.toolNameFallback;
+}
+
+function TimelineStep({ tool, t }) {
   const Icon = toolIcon(tool.name);
-  const friendlyName = t.toolNames?.[tool.name] || tool.display || tool.name;
-  const duration = elapsedSeconds(tool);
-  const hasDetails = Boolean(summary.inputDetail.text || summary.outputDetail.text);
+  const label = friendlyLabel(tool, t);
+  const seconds = roundedSeconds(tool);
 
   return (
-    <article className={`tool-card tool-card-${tool.status}`}>
-      <div className="tool-card-main">
-        <span className="tool-card-icon" aria-hidden="true">
-          <Icon size={17} />
-        </span>
-        <div className="tool-card-content">
-          <div className="tool-card-title-row">
-            <span className="tool-name">{friendlyName}</span>
-            <span className={`tool-status tool-status-${tool.status}`}>
-              {tool.status === "done" ? <CheckCircle2 size={12} /> : <Loader2 size={12} className="spin" />}
-              {t.status[tool.status] || t.status.running}
-            </span>
-            {duration && (
-              <span className="tool-time"><Clock3 size={12} />{duration}s</span>
-            )}
-          </div>
-
-          {summary.stats.length > 0 && (
-            <div className="tool-stats">
-              {summary.stats.map((stat) => (
-                <span className="tool-stat" key={stat.label}>
-                  <strong>{stat.value}</strong> {stat.label}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {summary.firstProcedureTitle && (
-            <p className="tool-result-preview" dir="auto">{summary.firstProcedureTitle}</p>
-          )}
-
-          {hasDetails && (
-            <button
-              type="button"
-              className="tool-technical-toggle"
-              aria-expanded={showDetails}
-              onClick={() => setShowDetails((current) => !current)}
-            >
-              <Braces size={13} />
-              {showDetails ? t.hideTechnicalDetails : t.inputsOutputs}
-              {showDetails ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
-          )}
+    <div className={`tool-step tool-step-${tool.status}`}>
+      <span className="tool-step-marker" aria-hidden="true">
+        {tool.status === "running" && <Icon size={12} />}
+        {tool.status === "done" && <CheckCircle2 size={12} />}
+        {tool.status === "error" && <AlertTriangle size={12} />}
+      </span>
+      <div className="tool-step-body">
+        <div className="tool-step-title-row">
+          <span className="tool-step-label" dir="auto">{label}</span>
+          {seconds && <span className="tool-step-time"><Clock3 size={10} />{seconds}s</span>}
         </div>
+        {tool.status === "error" && (
+          <p className="tool-step-summary">{t.toolStepFailedLabel}</p>
+        )}
+        {tool.status === "done" && tool.summary && (
+          <p className="tool-step-summary" dir="auto">{tool.summary}</p>
+        )}
       </div>
-
-      {showDetails && hasDetails && (
-        <div className="tool-technical-grid">
-          {summary.inputDetail.text && (
-            <section className="tool-technical-section">
-              <div className="tool-technical-label">{t.toolInput}</div>
-              <pre dir="auto">{summary.inputDetail.text}</pre>
-              {summary.inputDetail.truncated && <span className="tool-truncated">{t.outputTruncated}</span>}
-            </section>
-          )}
-          {summary.outputDetail.text && (
-            <section className="tool-technical-section">
-              <div className="tool-technical-label">{t.toolOutput}</div>
-              <pre dir="auto">{summary.outputDetail.text}</pre>
-              {summary.outputDetail.truncated && <span className="tool-truncated">{t.outputTruncated}</span>}
-            </section>
-          )}
-        </div>
-      )}
-    </article>
+    </div>
   );
 }
 
-export default function ToolPanel({ tools = [], citizenLabel, detailed, active, t }) {
+function ThinkingStep({ t }) {
+  return (
+    <div className="tool-step tool-step-thinking">
+      <span className="tool-step-marker" aria-hidden="true">
+        <span className="tool-pulse-dot" />
+      </span>
+      <div className="tool-step-body">
+        <div className="tool-step-title-row">
+          <span className="tool-step-label">{t.thinkingLabel}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function ToolPanel({ tools = [], citizenLabel, thinking, detailed, active, t }) {
   const [expanded, setExpanded] = useState(true);
-  const completedCount = tools.filter((tool) => tool.status === "done").length;
-  const totalDuration = tools.reduce((total, tool) => {
+  const userToggledRef = useRef(false);
+  const wasActiveRef = useRef(active);
+
+  // Auto-collapse into a compact summary once processing finishes, unless
+  // the citizen already interacted with the toggle themselves.
+  useEffect(() => {
+    if (wasActiveRef.current && !active && !userToggledRef.current) {
+      setExpanded(false);
+    }
+    wasActiveRef.current = active;
+  }, [active]);
+
+  const toggle = () => {
+    userToggledRef.current = true;
+    setExpanded((v) => !v);
+  };
+
+  const completedCount = tools.filter((tool) => tool.status !== "running").length;
+  const totalSeconds = tools.reduce((total, tool) => {
     if (!tool.startedAt || !tool.endedAt) return total;
     return total + (tool.endedAt - tool.startedAt);
   }, 0);
+  const roundedTotal = Math.round(totalSeconds / 1000);
+
+  // A screen-reader-only live region announces progress in every display
+  // mode, since the visual timeline alone isn't announced automatically.
+  const liveLabel = thinking ? t.thinkingLabel : citizenLabel;
+  const liveRegion = liveLabel ? <span className="sr-only" role="status" aria-live="polite">{liveLabel}</span> : null;
 
   if (!detailed || tools.length === 0) {
-    if (!citizenLabel) return null;
+    if (!citizenLabel && !thinking) return null;
     return (
-      <div className="tool-citizen">
-        {active ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} className="tool-icon-done" />}
-        <span>{active ? citizenLabel : (t.processingComplete || citizenLabel)}</span>
+      <div className={`tool-citizen${thinking ? " tool-citizen-thinking" : ""}`}>
+        {liveRegion}
+        {active
+          ? (thinking ? <span className="tool-pulse-dot" aria-hidden="true" /> : <Loader2 size={14} className="spin" aria-hidden="true" />)
+          : <CheckCircle2 size={14} className="tool-icon-done" aria-hidden="true" />}
+        <span>{active ? (thinking ? t.thinkingLabel : citizenLabel) : (t.processingComplete || citizenLabel)}</span>
       </div>
     );
   }
 
   return (
-    <section className="tool-detailed">
+    <section className="tool-panel">
+      {liveRegion}
       <button
         type="button"
-        className="tool-detailed-toggle"
+        className="tool-panel-toggle"
         aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
+        onClick={toggle}
       >
         <span className="tool-panel-heading">
-          <span className="tool-panel-icon"><Sparkles size={16} /></span>
+          <span className={`tool-panel-icon${active ? " tool-panel-icon-active" : ""}`} aria-hidden="true">
+            {active ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />}
+          </span>
           <span>
-            <strong>{t.toolPanelTitle}</strong>
-            <small>{completedCount}/{tools.length} {t.toolCallsLabel}</small>
+            <strong>{active ? (thinking ? t.thinkingLabel : citizenLabel) : t.toolPanelTitle}</strong>
+            <small>{completedCount} {t.toolCallsLabel}</small>
           </span>
         </span>
         <span className="tool-panel-meta">
-          {totalDuration > 0 && <span><Clock3 size={12} />{(totalDuration / 1000).toFixed(1)}s</span>}
-          {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          {roundedTotal > 0 && <span><Clock3 size={12} />{roundedTotal}s</span>}
         </span>
       </button>
       {expanded && (
-        <div className="tool-detailed-list">
-          {tools.map((tool) => <ToolRow tool={tool} t={t} key={tool.callId} />)}
+        <div className="tool-timeline">
+          {tools.map((tool) => <TimelineStep tool={tool} t={t} key={tool.callId} />)}
+          {thinking && <ThinkingStep t={t} />}
         </div>
       )}
     </section>

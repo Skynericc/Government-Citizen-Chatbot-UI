@@ -55,7 +55,7 @@ async function readHttpErrorMessage(response) {
  * @param {AbortSignal} [opts.signal]
  * @param {(delta: string) => void} [opts.onToken]
  * @param {(evt: {callId: string, name: string, display?: string, args?: string}) => void} [opts.onToolStart]
- * @param {(evt: {callId: string, name?: string, output?: string}) => void} [opts.onToolEnd]
+ * @param {(evt: {callId: string, name?: string, output?: string, status?: "done"|"error", summary?: string}) => void} [opts.onToolEnd]
  * @param {(evt: {text: string, cacheHit: boolean, endedWithoutDone: boolean}) => void} [opts.onDone]
  * @param {(err: {kind: "network"|"http"|"rate_limit"|"stream", status?: number, message?: string, raw?: any}) => void} [opts.onError]
  */
@@ -142,7 +142,13 @@ export async function streamChat({
       }
       case "tool_end": {
         const callId = !evt.call_id || evt.call_id === "_last" ? lastCallId : evt.call_id;
-        if (callId) onToolEnd?.({ callId, name: evt.name, output: evt.output });
+        // The documented contract only guarantees call_id/name/output. If the
+        // backend is later extended with a per-tool failure signal or a
+        // short citizen-safe summary string, these are read defensively and
+        // simply ignored when absent — never required, never assumed.
+        const status = evt.status === "error" ? "error" : "done";
+        const summary = typeof evt.summary === "string" ? evt.summary : undefined;
+        if (callId) onToolEnd?.({ callId, name: evt.name, output: evt.output, status, summary });
         break;
       }
       case "done": {

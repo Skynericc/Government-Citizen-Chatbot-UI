@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Send, Mic, Square, X, Check, Copy, Volume2, ThumbsUp, ThumbsDown,
   Flag, Share2, Settings, ChevronDown, ChevronUp, Loader2,
-  CheckCircle2, Landmark, Paperclip, RotateCcw,
+  CheckCircle2, MessageSquareText, Paperclip, RotateCcw, Globe,
   CreditCard, BookUser, Baby, Home, Car, Sun, Moon, Monitor
 } from "lucide-react";
 import CSS from "./utils/styles.css?inline"
@@ -32,7 +32,7 @@ import {
 import { renderInline, parseMarkdown } from "./utils/Markdown.jsx";
 import { SourcesList } from "./components/Citations.jsx";
 import { getHeaderTextStyle } from "./utils/color.js";
-import ministryLogo from "./assets/ministry-logo.svg";
+import ministryLogo from "./assets/logo-mtnra-complet.svg";
 
 const MAX_FILES = 5;
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -95,6 +95,8 @@ export default function CitizenAssistant() {
   const [detailedMode, setDetailedMode] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const langMenuRef = useRef(null);
 
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -132,6 +134,17 @@ export default function CitizenAssistant() {
 
   const stickToBottomRef = useRef(true);
   const scrollFrameRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (langMenuRef.current && !langMenuRef.current.contains(event.target)) {
+        setLangMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (messages.length > 0) return;
@@ -286,50 +299,83 @@ export default function CitizenAssistant() {
   const startDemoGeneration = useCallback((assistantId, topic, userText) => {
     const steps = t.steps;
     const answer = (ANSWERS[topic] && ANSWERS[topic][language]) || ANSWERS.default[language];
+    const STEP_ACTIVE_MS = 650;
+    const THINKING_MS = 700;
 
     setMessages(prev => prev.map(m => m.id === assistantId
-      ? { ...m, phase: "tools", tools: [], citizenLabel: steps[0]?.label || "" }
+      ? { ...m, phase: "tools", tools: [], thinking: false, citizenLabel: steps[0]?.label || "" }
       : m));
 
+    let elapsed = 0;
     steps.forEach((step, idx) => {
-      const to = setTimeout(() => {
+      // Step becomes visibly active (spinner) as soon as the previous one finishes.
+      const startTo = setTimeout(() => {
+        setMessages(prev => prev.map(m => m.id === assistantId
+          ? {
+              ...m,
+              thinking: false,
+              citizenLabel: step.label,
+              tools: [...m.tools, {
+                callId: `demo-${idx}`, name: step.name, status: "running",
+                startedAt: Date.now(),
+              }],
+            }
+          : m));
+      }, elapsed);
+
+      elapsed += STEP_ACTIVE_MS;
+
+      // Then settles into its completed, calm state.
+      const endTo = setTimeout(() => {
         setMessages(prev => prev.map(m => {
           if (m.id !== assistantId) return m;
           const now = Date.now();
-          const tools = [...m.tools, {
-            callId: `demo-${idx}`, name: step.name, status: "done",
-            output: step.summary, startedAt: now - 450, endedAt: now,
-          }];
-          return { ...m, tools, citizenLabel: steps[idx + 1]?.label || step.label };
+          const tools = m.tools.map(tool => tool.callId === `demo-${idx}`
+            ? { ...tool, status: "done", endedAt: now, summary: step.summary }
+            : tool);
+          const isLastStep = idx === steps.length - 1;
+          return {
+            ...m,
+            tools,
+            // Once every step is done, the assistant visibly keeps thinking
+            // for a beat before the answer starts streaming.
+            thinking: isLastStep,
+            citizenLabel: isLastStep ? t.thinkingLabel : steps[idx + 1]?.label || step.label,
+          };
         }));
 
         if (idx === steps.length - 1) {
-          // start streaming text
-          const full = answer.text;
-          let pos = 0;
-          const chunkSize = 4;
-          // citations are known up front, so inline [[n]] marks resolve to
-          // real links as soon as they stream into view
-          setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, citations: answer.citations } : m));
-          const streamInterval = setInterval(() => {
-            pos += chunkSize;
-            const slice = full.slice(0, pos);
-            setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: slice, phase: "streaming" } : m));
-            if (pos >= full.length) {
-              clearInterval(streamInterval);
-              setMessages(prev => prev.map(m => m.id === assistantId ? {
-                ...m, content: full, phase: "done", citations: answer.citations, expandable: {
-                  title: answer.expandableTitle, body: answer.expandableBody,
-                }
-              } : m));
-              finalizeHistory(userText, full);
-              setIsGenerating(false);
-            }
-          }, 18);
-          genTimeoutsRef.current.push(streamInterval);
+          const thinkTo = setTimeout(() => {
+            // start streaming text
+            const full = answer.text;
+            let pos = 0;
+            const chunkSize = 4;
+            // citations are known up front, so inline [[n]] marks resolve to
+            // real links as soon as they stream into view
+            setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, citations: answer.citations } : m));
+            const streamInterval = setInterval(() => {
+              pos += chunkSize;
+              const slice = full.slice(0, pos);
+              setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: slice, phase: "streaming", thinking: false } : m));
+              if (pos >= full.length) {
+                clearInterval(streamInterval);
+                setMessages(prev => prev.map(m => m.id === assistantId ? {
+                  ...m, content: full, phase: "done", citations: answer.citations, expandable: {
+                    title: answer.expandableTitle, body: answer.expandableBody,
+                  }
+                } : m));
+                finalizeHistory(userText, full);
+                setIsGenerating(false);
+              }
+            }, 18);
+            genTimeoutsRef.current.push(streamInterval);
+          }, THINKING_MS);
+          genTimeoutsRef.current.push(thinkTo);
         }
-      }, 650 * (idx + 1));
-      genTimeoutsRef.current.push(to);
+      }, elapsed);
+
+      elapsed += 120; // brief settle beat between steps
+      genTimeoutsRef.current.push(startTo, endTo);
     });
   }, [language, t]);
 
@@ -342,12 +388,28 @@ export default function CitizenAssistant() {
   /* ------------------------------------------------------------------ */
   const startRealGeneration = useCallback((assistantId, userText, inputMode = "text") => {
     setMessages(prev => prev.map(m => m.id === assistantId
-      ? { ...m, phase: "tools", tools: [], citizenLabel: t.citizenGenericLabel }
+      ? { ...m, phase: "tools", tools: [], thinking: true, citizenLabel: t.thinkingLabel }
       : m));
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
     let accumulated = "";
+
+    // Never trust a backend-supplied string as citizen-facing copy unless it
+    // is short, plain text — this keeps raw JSON/tool payloads from ever
+    // reaching the UI even if a future backend accidentally sends some.
+    const safeSummary = (value) => {
+      if (typeof value !== "string") return undefined;
+      const trimmed = value.trim();
+      if (!trimmed || trimmed.length > 160) return undefined;
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) return undefined;
+      return trimmed;
+    };
+    // `display` (contract §2) is explicitly documented as the human-readable
+    // name meant for the user — unlike `args`/`output`, it's safe by
+    // definition. Prefer it; fall back to our own mapping, then a neutral
+    // label, so an unmapped/unnamed tool never shows its raw technical name.
+    const friendlyName = (name, display) => safeSummary(display) || t.toolNames?.[name] || t.toolNameFallback;
 
     streamChat({
       userText,
@@ -360,27 +422,47 @@ export default function CitizenAssistant() {
       onToken: (delta) => {
         accumulated += delta;
         setMessages(prev => prev.map(m => m.id === assistantId
-          ? { ...m, content: accumulated, phase: "streaming" }
+          ? { ...m, content: accumulated, phase: "streaming", thinking: false }
           : m));
       },
 
-      onToolStart: ({ callId, name, display, args }) => {
-        setMessages(prev => prev.map(m => m.id === assistantId
-          ? { ...m, tools: [...m.tools, { callId, name, display, args, status: "running", startedAt: Date.now() }] }
-          : m));
-      },
-
-      onToolEnd: ({ callId, output, name }) => {
+      // Intentionally NOT storing evt.args here (contract §3: an arbitrary
+      // JSON string) — only what the citizen-facing UI is allowed to show.
+      onToolStart: ({ callId, name, display }) => {
         setMessages(prev => prev.map(m => m.id === assistantId
           ? {
               ...m,
-              tools: m.tools.map(tool => tool.callId === callId
-                ? { ...tool, // preserve name/display/args from the start event, but accept name if provided
-                    name: tool.name || name || tool.name,
-                    status: "done", output, endedAt: Date.now() }
-                : tool),
+              thinking: false,
+              citizenLabel: friendlyName(name, display),
+              tools: [...m.tools, { callId, name, display, status: "running", startedAt: Date.now() }],
             }
           : m));
+      },
+
+      // Intentionally NOT storing evt.output here (contract §4: an arbitrary
+      // JSON string) — only a vetted plain-text summary, if one was sent.
+      onToolEnd: ({ callId, name, status, summary }) => {
+        setMessages(prev => prev.map(m => {
+          if (m.id !== assistantId) return m;
+          const tools = m.tools.map(tool => tool.callId === callId
+            ? {
+                ...tool,
+                name: tool.name || name,
+                status: status === "error" ? "error" : "done",
+                endedAt: Date.now(),
+                summary: safeSummary(summary),
+              }
+            : tool);
+          const stillRunning = tools.some(tool => tool.status === "running");
+          return {
+            ...m,
+            tools,
+            // Once nothing else is running, the assistant is visibly still
+            // thinking until the first answer token arrives.
+            thinking: !stillRunning,
+            citizenLabel: stillRunning ? m.citizenLabel : t.thinkingLabel,
+          };
+        }));
       },
 
       onDone: ({ text }) => {
@@ -388,7 +470,7 @@ export default function CitizenAssistant() {
         // used as-is even if it differs slightly from the streamed tokens.
         const finalText = text || accumulated;
         setMessages(prev => prev.map(m => m.id === assistantId
-          ? { ...m, content: finalText, phase: "done" }
+          ? { ...m, content: finalText, phase: "done", thinking: false }
           : m));
         finalizeHistory(userText, finalText);
         setIsGenerating(false);
@@ -401,7 +483,7 @@ export default function CitizenAssistant() {
           ? (err.message || t.rateLimitedMessage)
           : (err.kind === "stream" && err.message ? err.message : t.agentErrorGeneric);
         setMessages(prev => prev.map(m => m.id === assistantId
-          ? { ...m, content: message, phase: "done", isError: true }
+          ? { ...m, content: message, phase: "done", thinking: false, isError: true }
           : m));
         // Keep the user's turn in history even on failure (finalizeHistory
         // skips the empty assistant turn), so the next question retains
@@ -518,7 +600,7 @@ export default function CitizenAssistant() {
     setMessages(prev => [
       ...prev,
       { id: userId, role: "user", content: text, attachments, audio },
-      { id: assistantId, role: "assistant", content: "", phase: "tools", tools: [], citizenLabel: "", feedback: null },
+      { id: assistantId, role: "assistant", content: "", phase: "tools", tools: [], thinking: true, citizenLabel: t.thinkingLabel, feedback: null },
     ]);
     setInput("");
     setAttachments([]);
@@ -646,6 +728,12 @@ export default function CitizenAssistant() {
 
   const displaySubtitle = customSubtitle || t.subtitle;
   const hasStarted = messages.length > 0;
+  const LANG_OPTIONS = [
+    { value: "fr", label: "Français" },
+    { value: "en", label: "English" },
+    { value: "ar", label: "العربية" },
+  ];
+  const currentLangLabel = LANG_OPTIONS.find(opt => opt.value === language)?.label || "Français";
 
   return (
     <div
@@ -659,23 +747,92 @@ export default function CitizenAssistant() {
         "--header-border": headerText.border,
         "--header-hover-bg": headerText.hoverBg,
         "--header-idle-bg": headerText.idleBg,
+        "--header-surface": resolvedTheme === "dark" ? "#181d1f" : "#ffffff",
+        "--header-surface-tint": resolvedTheme === "dark" ? "#20262a" : "#fbfcfe",
+        "--brand-blue": resolvedTheme === "dark" ? "#edf3ff" : "#0e2f5c",
+        "--brand-blue-soft": resolvedTheme === "dark" ? "#9baecb" : "#8493ac",
+        "--gold": "#a9812e",
+        "--gold-light": "#d9b866",
       }}
     >
       <style>{CSS}</style>
 
-      <header className="app-header">
+      <header className="app-header" dir={t.dir}>
         <div className="app-header-inner">
           <div className="brand">
-            <span className="brand-logo-badge">
-              <img src={ministryLogo} alt={institutionName} className="brand-logo-img" />
-            </span>
-            <div className="brand-divider" />
+            <img src={ministryLogo} alt={institutionName} className="brand-logo-img" />
+            <div className="brand-divider" aria-hidden="true" />
+
             <div className="brand-text">
-              <div className="brand-name">{institutionName}</div>
-              <div className="brand-subtitle">{displaySubtitle}</div>
+              <div className="brand-eyebrow" data-fr="Royaume du Maroc" data-ar="المملكة المغربية">
+                {language === "ar" ? "المملكة المغربية" : "Royaume du Maroc"}
+              </div>
+              <p className="brand-name">
+                <span className="brand-name-full">
+                  {language === "ar"
+                    ? "وزارة الانتقال الرقمي\nوإصلاح الإدارة"
+                    : "Ministère de la Transition Numérique\net de la Réforme de l'Administration"}
+                </span>
+                <span className="brand-name-compact">
+                  {language === "ar" ? "وزارة الانتقال الرقمي" : "Ministère de la Transition Numérique"}
+                </span>
+              </p>
+            </div>
+
+            <div className="identity-rule" aria-hidden="true" />
+
+            <div className="service">
+              <div className="service-name">
+                <MessageSquareText size={16} />
+                <span>{language === "ar" ? "مساعد المواطن" : "Assistant Citoyen"}</span>
+              </div>
+              <div className="service-desc">
+                {language === "ar" ? "معلومات إدارية رسمية" : "Information administrative officielle"}
+              </div>
             </div>
           </div>
+
           <div className="header-actions">
+            <div className={`lang-menu ${langMenuOpen ? "is-open" : ""}`} ref={langMenuRef}>
+              <button
+                type="button"
+                className="lang-trigger"
+                onClick={() => setLangMenuOpen(open => !open)}
+                aria-haspopup="listbox"
+                aria-expanded={langMenuOpen}
+                aria-label={t.languageLabel}
+              >
+                <Globe size={16} />
+                <span className="lang-current">{currentLangLabel}</span>
+                <ChevronDown size={14} className="lang-chevron" />
+              </button>
+
+              <ul className="lang-list" role="listbox" aria-label={t.languageLabel}>
+                {LANG_OPTIONS.map((option) => (
+                  <li
+                    key={option.value}
+                    role="option"
+                    aria-selected={language === option.value}
+                    onClick={() => {
+                      setLanguage(option.value);
+                      setLangMenuOpen(false);
+                    }}
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setLanguage(option.value);
+                        setLangMenuOpen(false);
+                      }
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    <Check size={15} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             <button
               type="button"
               className="settings-btn icon-tooltip"
@@ -816,6 +973,7 @@ export default function CitizenAssistant() {
                         <ToolPanel
                           tools={m.tools}
                           citizenLabel={m.citizenLabel}
+                          thinking={m.thinking}
                           detailed={detailedMode}
                           active={m.phase === "tools" || m.tools?.some(tool => tool.status === "running")}
                           t={t}
