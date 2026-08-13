@@ -3,7 +3,7 @@ import {
   Send, Mic, Square, X, Check, Copy, Volume2, ThumbsUp, ThumbsDown,
   Flag, Share2, Settings, ChevronDown, ChevronUp, Loader2,
   CheckCircle2, MessageSquareText, Paperclip, RotateCcw, Globe,
-  CreditCard, BookUser, Baby, Home, Car, Sun, Moon, Monitor
+  CreditCard, BookUser, Baby, Home, Car, Sun, Moon, Monitor, Landmark
 } from "lucide-react";
 import CSS from "./utils/styles.css?inline"
 import { STRINGS } from "./constants/Strings"
@@ -783,7 +783,7 @@ export default function CitizenAssistant() {
 
             <div className="service">
               <div className="service-name">
-                <MessageSquareText size={16} />
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/><path d="m8.8 11.6 2 2 4-4.2"/></svg>
                 <span>{language === "ar" ? "مساعد المواطن" : "Assistant Citoyen"}</span>
               </div>
               <div className="service-desc">
