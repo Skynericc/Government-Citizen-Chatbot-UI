@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   Database,
   Layers3,
@@ -9,14 +11,42 @@ import {
   Search,
   Sparkles,
 } from "lucide-react";
+import { parseMarkdown } from "../utils/Markdown.jsx";
 
 /* ------------------------------------------------------------------ */
-/* This component only ever reads: callId, name (used solely as an     */
-/* icon/label LOOKUP KEY, never printed), display, status, startedAt,  */
-/* endedAt, and a pre-vetted plain-text `summary`. It never reads or   */
-/* renders tool.args or tool.output — those are intentionally not      */
-/* even present in message state (see CitizenAssistant.jsx).           */
+/* By explicit product decision, this panel now also surfaces the raw  */
+/* search terms (from tool.args) and the raw tool output (tool.output),*/
+/* both collapsed by default. This intentionally departs from the      */
+/* original citizen-safety guidance in TOOL_CALL_UI_REQUIREMENTS.txt,  */
+/* which called out exactly this data (query terms, raw output, chunk  */
+/* indexes, internal links) as content that must never reach citizens  */
+/* — see conversation history for the explicit sign-off overriding it. */
 /* ------------------------------------------------------------------ */
+
+// Flattens every string/array-of-strings value out of the tool's raw
+// `args` JSON into a single deduplicated list — no key names, just the
+// search terms (first_or, mandatories, semantic_queries, ...).
+function extractQueryTerms(argsRaw) {
+  if (!argsRaw) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(argsRaw);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const terms = [];
+  Object.values(parsed).forEach((value) => {
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (typeof item === "string" && item.trim()) terms.push(item.trim());
+      });
+    } else if (typeof value === "string" && value.trim()) {
+      terms.push(value.trim());
+    }
+  });
+  return [...new Set(terms)];
+}
 
 function roundedSeconds(tool) {
   if (!tool.startedAt) return null;
@@ -39,9 +69,13 @@ function friendlyLabel(tool, t) {
 }
 
 function TimelineStep({ tool, t }) {
+  const [showQueries, setShowQueries] = useState(false);
+  const [showOutput, setShowOutput] = useState(false);
+
   const Icon = toolIcon(tool.name);
   const label = friendlyLabel(tool, t);
   const seconds = roundedSeconds(tool);
+  const queryTerms = extractQueryTerms(tool.args);
 
   return (
     <div className={`tool-step tool-step-${tool.status}`}>
@@ -60,6 +94,40 @@ function TimelineStep({ tool, t }) {
         )}
         {tool.status === "done" && tool.summary && (
           <p className="tool-step-summary" dir="auto">{tool.summary}</p>
+        )}
+
+        {queryTerms.length > 0 && (
+          <div className="tool-step-detail">
+            <button
+              type="button"
+              className="tool-step-detail-toggle"
+              aria-expanded={showQueries}
+              onClick={() => setShowQueries((v) => !v)}
+            >
+              {showQueries ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {showQueries ? t.toolQueryTermsHide : t.toolQueryTermsShow}
+            </button>
+            {showQueries && (
+              <p className="tool-step-queries" dir="auto">{queryTerms.join(", ")}</p>
+            )}
+          </div>
+        )}
+
+        {tool.status === "done" && tool.output && (
+          <div className="tool-step-detail">
+            <button
+              type="button"
+              className="tool-step-detail-toggle"
+              aria-expanded={showOutput}
+              onClick={() => setShowOutput((v) => !v)}
+            >
+              {showOutput ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {showOutput ? t.toolOutputHide : t.toolOutputShow}
+            </button>
+            {showOutput && (
+              <div className="tool-step-output" dir="auto">{parseMarkdown(tool.output)}</div>
+            )}
+          </div>
         )}
       </div>
     </div>

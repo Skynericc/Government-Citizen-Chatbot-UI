@@ -316,7 +316,7 @@ export default function CitizenAssistant() {
               thinking: false,
               citizenLabel: step.label,
               tools: [...m.tools, {
-                callId: `demo-${idx}`, name: step.name, status: "running",
+                callId: `demo-${idx}`, name: step.name, args: step.args, status: "running",
                 startedAt: Date.now(),
               }],
             }
@@ -331,7 +331,7 @@ export default function CitizenAssistant() {
           if (m.id !== assistantId) return m;
           const now = Date.now();
           const tools = m.tools.map(tool => tool.callId === `demo-${idx}`
-            ? { ...tool, status: "done", endedAt: now, summary: step.summary }
+            ? { ...tool, status: "done", endedAt: now, summary: step.summary, output: step.output }
             : tool);
           const isLastStep = idx === steps.length - 1;
           return {
@@ -426,22 +426,18 @@ export default function CitizenAssistant() {
           : m));
       },
 
-      // Intentionally NOT storing evt.args here (contract §3: an arbitrary
-      // JSON string) — only what the citizen-facing UI is allowed to show.
-      onToolStart: ({ callId, name, display }) => {
+      onToolStart: ({ callId, name, display, args }) => {
         setMessages(prev => prev.map(m => m.id === assistantId
           ? {
               ...m,
               thinking: false,
               citizenLabel: friendlyName(name, display),
-              tools: [...m.tools, { callId, name, display, status: "running", startedAt: Date.now() }],
+              tools: [...m.tools, { callId, name, display, args, status: "running", startedAt: Date.now() }],
             }
           : m));
       },
 
-      // Intentionally NOT storing evt.output here (contract §4: an arbitrary
-      // JSON string) — only a vetted plain-text summary, if one was sent.
-      onToolEnd: ({ callId, name, status, summary }) => {
+      onToolEnd: ({ callId, name, status, summary, output }) => {
         setMessages(prev => prev.map(m => {
           if (m.id !== assistantId) return m;
           const tools = m.tools.map(tool => tool.callId === callId
@@ -451,6 +447,7 @@ export default function CitizenAssistant() {
                 status: status === "error" ? "error" : "done",
                 endedAt: Date.now(),
                 summary: safeSummary(summary),
+                output,
               }
             : tool);
           const stillRunning = tools.some(tool => tool.status === "running");
